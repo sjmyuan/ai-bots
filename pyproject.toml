@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "ai-bots"
+version = "0.1.0"
+description = ""
+authors = ["sjmyuan <shang.jiaming@163.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+streamlit = "^1.38.0"
+openai = "^1.50.2"
+dashscope = "^1.20.10"
+streamlit-authenticator = "^0.4.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
