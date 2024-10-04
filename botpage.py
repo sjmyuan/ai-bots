@@ -2,11 +2,15 @@ from openai import OpenAI
 import streamlit as st
 
 
-def botpage(session):
+def botpage():
+
+    session = st.session_state.current_session
 
     bot = next(b for b in st.session_state.bots if b["id"] == session["bot_id"])
 
-    st.title(bot["name"])
+    name = session["name"] or bot["name"]
+
+    st.title(name)
 
     system_prompt = {"role": "system", "content": bot["prompt"]}
 
@@ -38,3 +42,4 @@ def botpage(session):
         if not session["name"]:
             session["name"] = prompt[0:10]
             st.session_state.bot_sessions.append(session)
+            st.session_state.current_session_name = session["name"]
