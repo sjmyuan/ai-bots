@@ -26,14 +26,20 @@ def botpage():
         with st.chat_message("user"):
             st.markdown(prompt)
 
+        system_prompt_list = (
+            [system_prompt] if system_prompt["content"].strip() != "" else []
+        )
+
         with st.chat_message("assistant"):
             stream = client.chat.completions.create(
                 model=bot["model"],
-                messages=[system_prompt]
-                + [
-                    {"role": msg["role"], "content": msg["content"]}
-                    for msg in session["messages"][-7:]
-                ],
+                messages=(
+                    system_prompt_list
+                    + [
+                        {"role": msg["role"], "content": msg["content"]}
+                        for msg in session["messages"][-7:]
+                    ]
+                ),
                 stream=True,
             )
             response = st.write_stream(stream)
