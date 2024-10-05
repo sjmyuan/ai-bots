@@ -31,7 +31,9 @@ authenticator.login()
 
 if st.session_state["authentication_status"]:
     authenticator.logout()
-    if "bots" not in st.session_state:
+    if "bots" not in st.session_state or len(st.session_state.bots) != len(
+        config["bots"]
+    ):
         st.session_state.bots = config["bots"]
 
     if "bot_sessions" not in st.session_state:
