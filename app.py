@@ -13,6 +13,10 @@ def set_current_session(session):
     st.session_state.current_session = session
 
 
+st.set_page_config(
+    "AI Bots", page_icon="https://images.shangjiaming.com/bio-photo.jpeg"
+)
+
 with open(os.getenv("CONFIG_FILE")) as file:
     config = yaml.load(file, Loader=SafeLoader)
 
@@ -59,6 +63,7 @@ if st.session_state["authentication_status"]:
                         "messages": [],
                     },
                 ),
+                use_container_width=True,
             )
 
         st.subheader("会话记录")
@@ -68,6 +73,7 @@ if st.session_state["authentication_status"]:
                 on_click=set_current_session,
                 args=(session,),
                 disabled=session["name"] == st.session_state.current_session["name"],
+                use_container_width=True,
             )
 
     botpage()
