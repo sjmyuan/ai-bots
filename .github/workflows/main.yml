@@ -2,6 +2,10 @@ name: Build AI Bots
 
 on: 
   workflow_dispatch:
+    inputs:
+        version:
+          description: 'Enter a version number'
+          required: true
   push:
       branches:
         - main
@@ -30,4 +34,4 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           push: true
-          tags: sjmyuan/ai-bots:latest
+          tags: sjmyuan/ai-bots:${{ github.event.inputs.version }}
