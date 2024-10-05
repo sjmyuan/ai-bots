@@ -1,3 +1,4 @@
+import os
 from openai import OpenAI
 import streamlit as st
 import streamlit_authenticator as stauth
@@ -12,7 +13,7 @@ def set_current_session(session):
     st.session_state.current_session = session
 
 
-with open("./config.yml") as file:
+with open(os.getenv("CONFIG_FILE")) as file:
     config = yaml.load(file, Loader=SafeLoader)
 
 authenticator = stauth.Authenticate(

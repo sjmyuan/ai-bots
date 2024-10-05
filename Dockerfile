@@ -10,7 +10,7 @@ RUN pip install poetry
 
 # 使用 Poetry 安装依赖
 RUN poetry config virtualenvs.create false \
-    && poetry install --no-interaction --no-ansi --only main
+    && poetry install --no-root --no-interaction --no-ansi --only main
 
 # 第二阶段：构建最终镜像
 FROM python:3.12-slim
@@ -22,10 +22,11 @@ COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 # 复制应用代码
-COPY . .
+COPY app.py .
+COPY botpage.py .
 
 # 暴露 Streamlit 的默认端口
 EXPOSE 8501
 
 # 启动 Streamlit 应用程序
-CMD ["streamlit", "run", "app.py"]
+CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
