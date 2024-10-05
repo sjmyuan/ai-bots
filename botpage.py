@@ -32,7 +32,7 @@ def botpage():
                 messages=[system_prompt]
                 + [
                     {"role": msg["role"], "content": msg["content"]}
-                    for msg in session["messages"]
+                    for msg in session["messages"][-7:]
                 ],
                 stream=True,
             )
