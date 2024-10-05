@@ -1,4 +1,4 @@
-name: Generate Resume
+name: Build AI Bots
 
 on: 
   workflow_dispatch:
