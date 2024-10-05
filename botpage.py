@@ -42,4 +42,3 @@ def botpage():
         if not session["name"]:
             session["name"] = prompt[0:50]
             st.session_state.bot_sessions.append(session)
-            st.session_state.current_session_name = session["name"]

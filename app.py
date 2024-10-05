@@ -43,7 +43,7 @@ if st.session_state["authentication_status"]:
         st.info(f"There is no bot")
         st.stop()
 
-    if "current_session_name" not in st.session_state:
+    if "current_session" not in st.session_state:
         st.session_state.current_session = {
             "name": None,
             "bot_id": init_bot["id"],
