@@ -6,14 +6,18 @@ AI Bots is a simple platform that allows you to define your own OpenAI-compatibl
 
 The config file is based on the config file of [Streamlit-Authenticator](https://github.com/mkhorasani/Streamlit-Authenticator?tab=readme-ov-file#3-creating-a-config-file)
 
-You just need to append the bots section to the config file
+You just need to append the models and bots section to the config file
 
 ```yaml
-bots:
-  - id: 1 # bot id
+models:
+  - id: 1 # model id
+    name: "" # model name
     api_key: "" # api key
     base_url: "" # the base url of OpenAI-compatible platform, for example https://dashscope.aliyuncs.com/compatible-mode/v1
-    model: "" # model name
+    model: "" # model
+
+bots:
+  - id: 1 # bot id
     name: "" # bot name
     description: "" # bot description
     prompt: "" # bot prompt
