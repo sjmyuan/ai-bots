@@ -34,6 +34,8 @@ def botpage():
             [system_prompt] if system_prompt["content"].strip() != "" else []
         )
 
+        response = ""
+        container = None
         with st.chat_message("assistant"):
             stream = client.chat.completions.create(
                 model=model["model"],
@@ -46,7 +48,33 @@ def botpage():
                 ),
                 stream=True,
             )
-            response = st.write_stream(stream)
+
+            for chunk in stream:
+                message = ""
+                if len(chunk.choices) == 0 or chunk.choices[0].delta is None:
+                    # The choices list can be empty. E.g. when using the
+                    # AzureOpenAI client, the first chunk will always be empty.
+                    message = ""
+                else:
+                    message = chunk.choices[0].delta.content or ""
+
+                if not message:
+                    continue
+
+                first_text = False
+                if not container:
+                    container = st.empty()
+                    first_text = True
+
+                response += message
+
+                # Only add the streaming symbol on the second text chunk
+                container.markdown(response + ("" if first_text else " | "))
+
+        # Flush stream
+        container.markdown(response)
+        container = None
+
         session["messages"].append({"role": "assistant", "content": response})
 
         if not session["name"]:
