@@ -2,6 +2,14 @@ from openai import OpenAI
 import streamlit as st
 
 
+def quote_content(content):
+    lines = content.splitlines()
+
+    modified_lines = ["> " + line for line in lines]
+
+    return "\n".join(modified_lines)
+
+
 def botpage():
 
     session = st.session_state.current_session
@@ -22,10 +30,12 @@ def botpage():
 
     for msg in session["messages"]:
         with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+            st.markdown(quote_content(msg["reasoning_content"]) + msg["content"])
 
     if prompt := st.chat_input():
-        session["messages"].append({"role": "user", "content": prompt})
+        session["messages"].append(
+            {"role": "user", "content": prompt, "reasoning_content": ""}
+        )
 
         with st.chat_message("user"):
             st.markdown(prompt)
@@ -35,6 +45,7 @@ def botpage():
         )
 
         response = ""
+        reasoning_response = ""
         container = None
         with st.chat_message("assistant"):
             stream = client.chat.completions.create(
@@ -51,14 +62,19 @@ def botpage():
 
             for chunk in stream:
                 message = ""
+                reasoning_message = ""
                 if len(chunk.choices) == 0 or chunk.choices[0].delta is None:
-                    # The choices list can be empty. E.g. when using the
-                    # AzureOpenAI client, the first chunk will always be empty.
-                    message = ""
+                    # The choices list# can be empty. E.g. when using the
+                    # AzureOpenAI clie nt, the first chunk will always be empty.
+                    message = ""  #
                 else:
-                    message = chunk.choices[0].delta.content or ""
+                    if "reasoning_content" in chunk.choices[0].delta:
+                        reasoning_message += chunk.choices[0].delta.reasoning_content
+                    else:
+                        message += chunk.choices[0].delta.content or ""
 
-                if not message:
+                # Continue if there is no content and reasoning content
+                if not message and not reasoning_message:
                     continue
 
                 first_text = False
@@ -67,15 +83,27 @@ def botpage():
                     first_text = True
 
                 response += message
+                reasoning_response += reasoning_message
 
                 # Only add the streaming symbol on the second text chunk
-                container.markdown(response + ("" if first_text else " | "))
+                container.markdown(
+                    quote_content(reasoning_response)
+                    + response
+                    + ("" if first_text else " | ")
+                )
 
         # Flush stream
-        container.markdown(response)
-        container = None
+        if container:
+            container.markdown(quote_content(reasoning_response) + response)
+            container = None
 
-        session["messages"].append({"role": "assistant", "content": response})
+        session["messages"].append(
+            {
+                "role": "assistant",
+                "content": response,
+                "reasoning_content": reasoning_response,
+            }
+        )
 
         if not session["name"]:
             session["name"] = prompt[0:50]
