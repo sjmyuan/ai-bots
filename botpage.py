@@ -68,7 +68,10 @@ def botpage():
                     # AzureOpenAI clie nt, the first chunk will always be empty.
                     message = ""  #
                 else:
-                    if "reasoning_content" in chunk.choices[0].delta:
+                    if (
+                        hasattr(chunk.choices[0].delta, "reasoning_content")
+                        and chunk.choices[0].delta.reasoning_content
+                    ):
                         reasoning_message += chunk.choices[0].delta.reasoning_content
                     else:
                         message += chunk.choices[0].delta.content or ""
