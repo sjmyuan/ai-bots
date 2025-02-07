@@ -44,9 +44,6 @@ def botpage():
             [system_prompt] if system_prompt["content"].strip() != "" else []
         )
 
-        response = ""
-        reasoning_response = ""
-        container = None
         with st.chat_message("assistant"):
             stream = client.chat.completions.create(
                 model=model["model"],
@@ -60,45 +57,7 @@ def botpage():
                 stream=True,
             )
 
-            for chunk in stream:
-                message = ""
-                reasoning_message = ""
-                if len(chunk.choices) == 0 or chunk.choices[0].delta is None:
-                    # The choices list# can be empty. E.g. when using the
-                    # AzureOpenAI clie nt, the first chunk will always be empty.
-                    message = ""  #
-                else:
-                    if (
-                        hasattr(chunk.choices[0].delta, "reasoning_content")
-                        and chunk.choices[0].delta.reasoning_content
-                    ):
-                        reasoning_message += chunk.choices[0].delta.reasoning_content
-                    else:
-                        message += chunk.choices[0].delta.content or ""
-
-                # Continue if there is no content and reasoning content
-                if not message and not reasoning_message:
-                    continue
-
-                first_text = False
-                if not container:
-                    container = st.empty()
-                    first_text = True
-
-                response += message
-                reasoning_response += reasoning_message
-
-                # Only add the streaming symbol on the second text chunk
-                container.markdown(
-                    quote_content(reasoning_response)
-                    + response
-                    + ("" if first_text else " | ")
-                )
-
-        # Flush stream
-        if container:
-            container.markdown(quote_content(reasoning_response) + response)
-            container = None
+            response, reasoning_response = write_stream(stream)
 
         session["messages"].append(
             {
@@ -111,3 +70,47 @@ def botpage():
         if not session["name"]:
             session["name"] = prompt[0:50]
             st.session_state.bot_sessions.append(session)
+
+
+def write_stream(stream):
+    response = ""
+    reasoning_response = ""
+    container = None
+    for chunk in stream:
+        message = ""
+        reasoning_message = ""
+        if len(chunk.choices) == 0 or chunk.choices[0].delta is None:
+            # The choices list# can be empty. E.g. when using the
+            # AzureOpenAI clie nt, the first chunk will always be empty.
+            message = ""  #
+        else:
+            if (
+                hasattr(chunk.choices[0].delta, "reasoning_content")
+                and chunk.choices[0].delta.reasoning_content
+            ):
+                reasoning_message += chunk.choices[0].delta.reasoning_content
+            else:
+                message += chunk.choices[0].delta.content or ""
+
+                # Continue if there is no content and reasoning content
+        if not message and not reasoning_message:
+            continue
+
+        first_text = False
+        if not container:
+            container = st.empty()
+            first_text = True
+
+        response += message
+        reasoning_response += reasoning_message
+
+        # Only add the streaming symbol on the second text chunk
+        container.markdown(
+            quote_content(reasoning_response) + response + ("" if first_text else " | ")
+        )
+
+        # Flush stream
+    if container:
+        container.markdown(quote_content(reasoning_response) + response)
+        container = None
+    return response, reasoning_response
