@@ -103,8 +103,15 @@ if st.session_state["authentication_status"]:
             ),
             lambda m: m["name"],
         )
-        
-        st.session_state.current_model = selected_model
+
+        # Handle custom model input
+        if selected_model["id"] == -1:
+            custom_model_name = st.text_input("输入模型名称")
+            selected_model["name"] = custom_model_name
+            selected_model["model"] = custom_model_name
+            st.session_state.current_model = selected_model
+        else:
+            st.session_state.current_model = selected_model
         
         # New conversation buttons
         st.subheader("新建对话")
