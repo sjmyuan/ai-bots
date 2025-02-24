@@ -1,0 +1,10 @@
+- [ ] Define the session structure for MongoDB.
+- [ ] Create a collection named "sessions" in MongoDB.
+- [ ] Implement caching using Streamlit:
+  - [ ] Use `cache_data` for query caching.
+  - [ ] Use `cache_resources` for database connection caching.
+  - [ ] Set cache TTL to 10 minutes.
+- [ ] Implement session updates:
+  - [ ] Perform an upsert operation when a new message is submitted by the user or returned by the bot.
+  - [ ] Do not save sessions to the database if there are no messages.
+- [ ] Ensure data consistency between the database and session_state.
