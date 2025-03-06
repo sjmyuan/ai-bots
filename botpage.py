@@ -2,6 +2,7 @@
 from openai import OpenAI
 import streamlit as st
 import logging
+import datetime
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -14,8 +15,26 @@ def quote_content(content: str) -> str:
     modified_lines = ["> " + line for line in lines]
     return "\n".join(modified_lines)
 
+def save_session_to_db(db, session):
+    """Save the session to MongoDB using an upsert operation."""
+    if not session["messages"]:
+        return
+    db.sessions.update_one(
+        {"id": session["id"]},
+        {
+            "$set": {
+                "user": st.session_state["username"],
+                "name": session["name"],
+                "create_time": session.get("create_time", datetime.now(datetime.timezone.utc)),
+                "bot_id": session["bot_id"],
+                "messages": session["messages"],
+            }
+        },
+        upsert=True,
+    )
+
 # Main function to handle the bot page
-def botpage():
+def botpage(db):
     # Get the current session and model
     session = st.session_state.current_session
     model = st.session_state.current_model
@@ -97,6 +116,8 @@ def botpage():
         if not session["name"]:
             session["name"] = prompt[:50]
             st.session_state.bot_sessions.append(session)
+
+        save_session_to_db(db, st.session_state.current_session)
 
 # Function to handle the streaming of chat responses
 def write_stream(stream):

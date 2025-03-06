@@ -8,8 +8,26 @@ import logging
 
 import yaml
 from yaml.loader import SafeLoader
-
 from botpage import botpage
+
+from streamlit.runtime.caching import cache_resource, cache_data
+from pymongo import MongoClient
+from datetime import datetime, timedelta
+
+@cache_resource(ttl=600)
+def get_db(mongo_uri, mongo_db):
+    """Get the MongoDB database."""
+    client = MongoClient(mongo_uri)
+    return client[mongo_db]
+
+def fetch_user_sessions(db, username, skip=0, limit=50):
+    """Fetch sessions for the current user from MongoDB."""
+    return list(
+        db.sessions.find({"user": username})
+        .sort("create_time", -1)
+        .skip(skip)
+        .limit(limit)
+    )
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -49,6 +67,8 @@ authenticator.login()
 if st.session_state["authentication_status"]:
     # Log out the user
     authenticator.logout()
+
+    db = get_db(config["mongo"]["uri"], "ai-bots")
     
     # Ensure bots and models are loaded
     if "bots" not in st.session_state or len(st.session_state.bots) != len(config["bots"]):
@@ -59,7 +79,7 @@ if st.session_state["authentication_status"]:
     
     # Initialize bot sessions
     if "bot_sessions" not in st.session_state:
-        st.session_state.bot_sessions = []
+        st.session_state.bot_sessions = fetch_user_sessions(db, st.session_state["name"])
     
     # Get the initial bot and model
     try:
@@ -83,6 +103,7 @@ if st.session_state["authentication_status"]:
     if "current_session" not in st.session_state:
         st.session_state.current_session = {
             "id": int(time.time()),
+            "user_name": st.session_state["name"],
             "name": None,
             "bot_id": init_bot["id"],
             "messages": [],
@@ -141,9 +162,13 @@ if st.session_state["authentication_status"]:
                 disabled=session["id"] == st.session_state.current_session["id"],
                 use_container_width=True,
             )
+        if st.button("Load more"):
+            skip = len(st.session_state.bot_sessions)
+            additional_sessions = fetch_user_sessions(db, st.session_state["name"], skip=skip)
+            st.session_state.bot_sessions.extend(additional_sessions)
     
     # Display the bot page
-    botpage()
+    botpage(db)
 
 # Handle authentication errors
 elif st.session_state["authentication_status"] is False:
