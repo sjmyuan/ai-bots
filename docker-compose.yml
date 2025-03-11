@@ -1,0 +1,55 @@
+# AI Bots Application with MongoDB and Streamlit
+# Services:
+# - mongo: Database service
+# - ai-bots: Backend application service
+# - streamlit: Frontend web interface
+
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:latest
+    container_name: mongo
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: active123
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - ai-bots-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+
+  ai-bots:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-bots
+    ports:
+      - "8501:8501"
+    environment:
+      - MONGO_URI=mongodb://root:active123@mongo:27017/
+      - CONFIG_FILE=/app/config.yml
+    volumes:
+      - .:/app
+    command: streamlit run app.py
+    depends_on:
+      - mongo
+    networks:
+      - ai-bots-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.00'
+          memory: 1G
+
+volumes:
+  mongo-data:
+
+networks:
+  ai-bots-network:
+    driver: bridge

@@ -38,17 +38,46 @@ def set_current_session(session):
     """Set the current session in the Streamlit session state."""
     st.session_state.current_session = session
 
+def load_config(config_file):
+    """Load configuration from a file."""
+    try:
+        with open(config_file) as file:
+            return yaml.load(file, Loader=SafeLoader)
+    except FileNotFoundError:
+        logger.error(f"Configuration file not found: {config_file}")
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing configuration file: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error loading configuration: {e}")
+    return None
+
+def initialize_session_state():
+    """Initialize session state variables."""
+    if "bots" not in st.session_state or len(st.session_state.bots) != len(config["bots"]):
+        st.session_state.bots = config["bots"]
+    if "models" not in st.session_state or len(st.session_state.models) != len(config["models"]):
+        st.session_state.models = config["models"]
+    if "bot_sessions" not in st.session_state:
+        st.session_state.bot_sessions = fetch_user_sessions(db, st.session_state["name"])
+    if "current_session" not in st.session_state:
+        st.session_state.current_session = {
+            "id": int(time.time()),
+            "user_name": st.session_state["name"],
+            "name": None,
+            "bot_id": init_bot["id"],
+            "messages": [],
+        }
+    if "current_model" not in st.session_state:
+        st.session_state.current_model = init_model
+
 # Set the page configuration
 st.set_page_config(
     "AI Bots", page_icon="https://images.shangjiaming.com/bio-photo.jpeg"
 )
 
 # Load the configuration from the environment variable
-try:
-    with open(os.getenv("CONFIG_FILE")) as file:
-        config = yaml.load(file, Loader=SafeLoader)
-except Exception as e:
-    logger.error(f"Failed to load configuration: {e}")
+config = load_config(os.getenv("CONFIG_FILE"))
+if not config:
     st.error("Failed to load configuration. Please check the CONFIG_FILE environment variable.")
     st.stop()
 
@@ -68,18 +97,10 @@ if st.session_state["authentication_status"]:
     # Log out the user
     authenticator.logout()
 
-    db = get_db(config["mongo"]["uri"], "ai-bots")
+    db = get_db(os.getenv("CONFIG_FILE"), "ai-bots")
     
     # Ensure bots and models are loaded
-    if "bots" not in st.session_state or len(st.session_state.bots) != len(config["bots"]):
-        st.session_state.bots = config["bots"]
-    
-    if "models" not in st.session_state or len(st.session_state.models) != len(config["models"]):
-        st.session_state.models = config["models"]
-    
-    # Initialize bot sessions
-    if "bot_sessions" not in st.session_state:
-        st.session_state.bot_sessions = fetch_user_sessions(db, st.session_state["name"])
+    initialize_session_state()
     
     # Get the initial bot and model
     try:
@@ -98,19 +119,6 @@ if st.session_state["authentication_status"]:
     if not init_model:
         st.info("There is no model")
         st.stop()
-    
-    # Set the current session and model
-    if "current_session" not in st.session_state:
-        st.session_state.current_session = {
-            "id": int(time.time()),
-            "user_name": st.session_state["name"],
-            "name": None,
-            "bot_id": init_bot["id"],
-            "messages": [],
-        }
-    
-    if "current_model" not in st.session_state:
-        st.session_state.current_model = init_model
     
     # Sidebar for model selection
     with st.sidebar:
