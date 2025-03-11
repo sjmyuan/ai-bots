@@ -13,7 +13,7 @@ services:
     restart: always
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: active123
+      MONGO_INITDB_ROOT_PASSWORD: example
     volumes:
       - mongo-data:/data/db
     networks:
@@ -32,7 +32,7 @@ services:
     ports:
       - "8501:8501"
     environment:
-      - MONGO_URI=mongodb://root:active123@mongo:27017/
+      - MONGO_URI=mongodb://root:example@mongo:27017/
       - CONFIG_FILE=/app/config.yml
     volumes:
       - .:/app
