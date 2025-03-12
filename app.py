@@ -162,15 +162,28 @@ if st.session_state["authentication_status"]:
         
         # Session history buttons
         st.subheader("会话记录")
+
+        # Group sessions by date
+        grouped_sessions = {}
         for session in st.session_state.bot_sessions:
-            st.button(
-                session["name"],
-                key=session["id"],
-                on_click=set_current_session,
-                args=(session,),
-                disabled=session["id"] == st.session_state.current_session["id"],
-                use_container_width=True,
-            )
+            date = session["create_time"].strftime("%Y-%m-%d")
+            if date not in grouped_sessions:
+                grouped_sessions[date] = []
+            grouped_sessions[date].append(session)
+
+        # Display sessions grouped by date
+        for date in sorted(grouped_sessions.keys(), reverse=True):
+            st.markdown(f"### {date}")
+            for session in grouped_sessions[date]:
+                st.button(
+                    session["name"],
+                    key=session["id"],
+                    on_click=set_current_session,
+                    args=(session,),
+                    disabled=session["id"] == st.session_state.current_session["id"],
+                    use_container_width=True,
+                )
+
         if st.button("Load more"):
             skip = len(st.session_state.bot_sessions)
             additional_sessions = fetch_user_sessions(db, st.session_state["name"], skip=skip)
