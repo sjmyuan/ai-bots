@@ -1,8 +1,8 @@
 # Import necessary libraries
 from openai import OpenAI
+from datetime import datetime,timezone
 import streamlit as st
 import logging
-import datetime
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -25,7 +25,7 @@ def save_session_to_db(db, session):
             "$set": {
                 "user": st.session_state["username"],
                 "name": session["name"],
-                "create_time": session.get("create_time", datetime.now(datetime.timezone.utc)),
+                "create_time": session.get("create_time", datetime.now(timezone.utc)),
                 "bot_id": session["bot_id"],
                 "messages": session["messages"],
             }
@@ -48,7 +48,7 @@ def display_chat_messages(messages):
         with st.chat_message(msg["role"]):
             st.markdown(quote_content(msg["reasoning_content"]) + msg["content"])
 
-def handle_user_input(session, client, system_prompt_list):
+def handle_user_input(session, client, model, system_prompt_list, db):
     """Handle user input and generate assistant response."""
     if prompt := st.chat_input():
         # Append the user message to the session
@@ -62,7 +62,7 @@ def handle_user_input(session, client, system_prompt_list):
         try:
             with st.chat_message("assistant"):
                 stream = client.chat.completions.create(
-                    model=model["model"],
+                    model=model,
                     messages=(
                         system_prompt_list
                         + [
@@ -126,7 +126,7 @@ def botpage(db):
     display_chat_messages(session["messages"])
 
     # Handle user input
-    handle_user_input(session, client, [system_prompt] if system_prompt["content"].strip() != "" else [])
+    handle_user_input(session, client, model["model"], [system_prompt] if system_prompt["content"].strip() != "" else [], db)
 
 # Function to handle the streaming of chat responses
 def write_stream(stream):

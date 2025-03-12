@@ -59,6 +59,25 @@ def initialize_session_state():
         st.session_state.models = config["models"]
     if "bot_sessions" not in st.session_state:
         st.session_state.bot_sessions = fetch_user_sessions(db, st.session_state["name"])
+
+    # Get the initial bot and model
+    try:
+        init_bot = next(b for b in st.session_state.bots)
+        init_model = next(m for m in st.session_state.models)
+    except StopIteration:
+        logger.error("No bots or models found in the configuration.")
+        st.info("There is no bot or model available.")
+        st.stop()
+
+    # Check if there are any bots or models
+    if not init_bot:
+        st.info("There is no bot")
+        st.stop()
+
+    if not init_model:
+        st.info("There is no model")
+        st.stop()
+
     if "current_session" not in st.session_state:
         st.session_state.current_session = {
             "id": int(time.time()),
@@ -97,28 +116,10 @@ if st.session_state["authentication_status"]:
     # Log out the user
     authenticator.logout()
 
-    db = get_db(os.getenv("CONFIG_FILE"), "ai-bots")
+    db = get_db(os.getenv("MONGO_URI"), "ai-bots")
     
     # Ensure bots and models are loaded
     initialize_session_state()
-    
-    # Get the initial bot and model
-    try:
-        init_bot = next(b for b in st.session_state.bots)
-        init_model = next(m for m in st.session_state.models)
-    except StopIteration:
-        logger.error("No bots or models found in the configuration.")
-        st.info("There is no bot or model available.")
-        st.stop()
-    
-    # Check if there are any bots or models
-    if not init_bot:
-        st.info("There is no bot")
-        st.stop()
-    
-    if not init_model:
-        st.info("There is no model")
-        st.stop()
     
     # Sidebar for model selection
     with st.sidebar:
