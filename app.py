@@ -33,6 +33,18 @@ def fetch_user_sessions(db, username, skip=0, limit=50):
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Function to create a new session
+def create_new_session(username, bot_id):
+    """Create a new session for the user with the specified bot."""
+    return {
+        "id": int(time.time()),
+        "user": username,
+        "create_time": datetime.now(timezone.utc),
+        "name": None,
+        "bot_id": bot_id,
+        "messages": [],
+    }
+
 # Function to set the current session
 def set_current_session(session):
     """Set the current session in the Streamlit session state."""
@@ -79,14 +91,7 @@ def initialize_session_state(config, db):
         st.stop()
 
     if "current_session" not in st.session_state:
-        st.session_state.current_session = {
-            "id": int(time.time()),
-            "user": st.session_state["name"],
-            "create_time": datetime.now(timezone.utc),
-            "name": None,
-            "bot_id": init_bot["id"],
-            "messages": [],
-        }
+        st.session_state.current_session = create_new_session(st.session_state["name"], init_bot["id"])
     if "current_model" not in st.session_state:
         st.session_state.current_model = init_model
 
@@ -154,16 +159,7 @@ if st.session_state["authentication_status"]:
             st.button(
                 bot["name"],
                 on_click=set_current_session,
-                args=(
-                    {
-                        "id": int(time.time()),
-                        "user": st.session_state["name"],
-                        "create_time": datetime.now(timezone.utc),
-                        "name": None,
-                        "bot_id": bot["id"],
-                        "messages": [],
-                    },
-                ),
+                args=(create_new_session(st.session_state["name"], bot["id"]),),
                 use_container_width=True,
             )
         
