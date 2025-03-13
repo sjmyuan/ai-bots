@@ -51,7 +51,7 @@ def load_config(config_file):
         logger.error(f"Unexpected error loading configuration: {e}")
     return None
 
-def initialize_session_state():
+def initialize_session_state(config, db):
     """Initialize session state variables."""
     if "bots" not in st.session_state or len(st.session_state.bots) != len(config["bots"]):
         st.session_state.bots = config["bots"]
@@ -81,7 +81,7 @@ def initialize_session_state():
     if "current_session" not in st.session_state:
         st.session_state.current_session = {
             "id": int(time.time()),
-            "user_name": st.session_state["name"],
+            "user": st.session_state["name"],
             "name": None,
             "bot_id": init_bot["id"],
             "messages": [],
@@ -119,7 +119,7 @@ if st.session_state["authentication_status"]:
     db = get_db(os.getenv("MONGO_URI"), "ai-bots")
     
     # Ensure bots and models are loaded
-    initialize_session_state()
+    initialize_session_state(config, db)
     
     # Sidebar for model selection
     with st.sidebar:
@@ -184,7 +184,7 @@ if st.session_state["authentication_status"]:
                     use_container_width=True,
                 )
 
-        if st.button("Load more"):
+        if st.button("Load more", use_container_width=True):
             skip = len(st.session_state.bot_sessions)
             additional_sessions = fetch_user_sessions(db, st.session_state["name"], skip=skip)
             st.session_state.bot_sessions.extend(additional_sessions)

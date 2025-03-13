@@ -23,7 +23,7 @@ def save_session_to_db(db, session):
         {"id": session["id"]},
         {
             "$set": {
-                "user": st.session_state["username"],
+                "user": session["user"],
                 "name": session["name"],
                 "create_time": session.get("create_time", datetime.now(timezone.utc)),
                 "bot_id": session["bot_id"],
@@ -92,7 +92,7 @@ def handle_user_input(session, client, model, system_prompt_list, db):
             session["name"] = prompt[:50]
             st.session_state.bot_sessions.append(session)
 
-        save_session_to_db(db, st.session_state.current_session)
+        save_session_to_db(db, session)
 
 # Main function to handle the bot page
 def botpage(db):
