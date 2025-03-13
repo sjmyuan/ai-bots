@@ -3,6 +3,7 @@ from openai import OpenAI
 from datetime import datetime,timezone
 import streamlit as st
 import logging
+import os
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -17,7 +18,7 @@ def quote_content(content: str) -> str:
 
 def save_session_to_db(db, session):
     """Save the session to MongoDB using an upsert operation."""
-    if not session["messages"]:
+    if not session["messages"] or db is None:
         return
     db.sessions.update_one(
         {"id": session["id"]},

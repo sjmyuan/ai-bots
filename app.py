@@ -12,7 +12,7 @@ from botpage import botpage
 
 from streamlit.runtime.caching import cache_resource, cache_data
 from pymongo import MongoClient
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 @cache_resource(ttl=600)
 def get_db(mongo_uri, mongo_db):
@@ -58,7 +58,7 @@ def initialize_session_state(config, db):
     if "models" not in st.session_state or len(st.session_state.models) != len(config["models"]):
         st.session_state.models = config["models"]
     if "bot_sessions" not in st.session_state:
-        st.session_state.bot_sessions = fetch_user_sessions(db, st.session_state["name"])
+        st.session_state.bot_sessions = [] if db is None else fetch_user_sessions(db, st.session_state["name"])
 
     # Get the initial bot and model
     try:
@@ -82,6 +82,7 @@ def initialize_session_state(config, db):
         st.session_state.current_session = {
             "id": int(time.time()),
             "user": st.session_state["name"],
+            "create_time": datetime.now(timezone.utc),
             "name": None,
             "bot_id": init_bot["id"],
             "messages": [],
@@ -116,7 +117,11 @@ if st.session_state["authentication_status"]:
     # Log out the user
     authenticator.logout()
 
-    db = get_db(os.getenv("MONGO_URI"), "ai-bots")
+    db = None
+    if os.getenv("MONGO_URI"):
+        db = get_db(os.getenv("MONGO_URI"), "ai-bots")
+    else:
+        logger.warning("MONGO_URI environment variable is not set. User sessions will not be fetched from the database.")
     
     # Ensure bots and models are loaded
     initialize_session_state(config, db)
@@ -152,6 +157,8 @@ if st.session_state["authentication_status"]:
                 args=(
                     {
                         "id": int(time.time()),
+                        "user": st.session_state["name"],
+                        "create_time": datetime.now(timezone.utc),
                         "name": None,
                         "bot_id": bot["id"],
                         "messages": [],
@@ -184,10 +191,11 @@ if st.session_state["authentication_status"]:
                     use_container_width=True,
                 )
 
-        if st.button("Load more", use_container_width=True):
-            skip = len(st.session_state.bot_sessions)
-            additional_sessions = fetch_user_sessions(db, st.session_state["name"], skip=skip)
-            st.session_state.bot_sessions.extend(additional_sessions)
+        if db is not None:
+            if st.button("Load more", use_container_width=True):
+                skip = len(st.session_state.bot_sessions)
+                additional_sessions = fetch_user_sessions(db, st.session_state["name"], skip=skip)
+                st.session_state.bot_sessions.extend(additional_sessions)
     
     # Display the bot page
     botpage(db)
