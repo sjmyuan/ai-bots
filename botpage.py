@@ -1,7 +1,9 @@
 # Import necessary libraries
 from openai import OpenAI
+from datetime import datetime,timezone
 import streamlit as st
 import logging
+import os
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -14,45 +16,41 @@ def quote_content(content: str) -> str:
     modified_lines = ["> " + line for line in lines]
     return "\n".join(modified_lines)
 
-# Main function to handle the bot page
-def botpage():
-    # Get the current session and model
-    session = st.session_state.current_session
-    model = st.session_state.current_model
-    
-    # Find the bot based on the session's bot ID
-    try:
-        bot = next(b for b in st.session_state.bots if b["id"] == session["bot_id"])
-    except StopIteration:
-        logger.error("No bot found with the specified ID.")
-        st.info("There is no bot available.")
-        st.stop()
-    
-    # Set the name of the session
-    name = session["name"] or bot["name"]
-    
-    # Display the title and captions
-    st.title(name)
-    st.caption(f"Bot: {bot['name']}")
-    st.caption(f"模型: {model['name']}")
+def save_session_to_db(db, session):
+    """Save the session to MongoDB using an upsert operation."""
+    if not session["messages"] or db is None:
+        return
+    db.sessions.update_one(
+        {"id": session["id"]},
+        {
+            "$set": {
+                "user": session["user"],
+                "name": session["name"],
+                "create_time": session.get("create_time", datetime.now(timezone.utc)),
+                "bot_id": session["bot_id"],
+                "messages": session["messages"],
+            }
+        },
+        upsert=True,
+    )
 
-    # Define the system prompt
-    system_prompt = {"role": "system", "content": bot["prompt"]}
-
-    # Initialize the OpenAI client
+def initialize_openai_client(api_key, base_url):
+    """Initialize the OpenAI client."""
     try:
-        client = OpenAI(api_key=model["api_key"], base_url=model["base_url"])
+        return OpenAI(api_key=api_key, base_url=base_url)
     except Exception as e:
         logger.error(f"Failed to initialize OpenAI client: {e}")
         st.error("Failed to initialize OpenAI client. Please check the API key and base URL.")
         st.stop()
 
-    # Display the chat messages
-    for msg in session["messages"]:
+def display_chat_messages(messages):
+    """Display chat messages."""
+    for msg in messages:
         with st.chat_message(msg["role"]):
             st.markdown(quote_content(msg["reasoning_content"]) + msg["content"])
 
-    # Handle user input
+def handle_user_input(session, client, model, system_prompt_list, db):
+    """Handle user input and generate assistant response."""
     if prompt := st.chat_input():
         # Append the user message to the session
         session["messages"].append({"role": "user", "content": prompt, "reasoning_content": ""})
@@ -61,14 +59,11 @@ def botpage():
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Prepare the system prompt list
-        system_prompt_list = [system_prompt] if system_prompt["content"].strip() != "" else []
-
         # Create the chat completion stream
         try:
             with st.chat_message("assistant"):
                 stream = client.chat.completions.create(
-                    model=model["model"],
+                    model=model,
                     messages=(
                         system_prompt_list
                         + [
@@ -97,6 +92,42 @@ def botpage():
         if not session["name"]:
             session["name"] = prompt[:50]
             st.session_state.bot_sessions.append(session)
+
+        save_session_to_db(db, session)
+
+# Main function to handle the bot page
+def botpage(db):
+    # Get the current session and model
+    session = st.session_state.current_session
+    model = st.session_state.current_model
+    
+    # Find the bot based on the session's bot ID
+    try:
+        bot = next(b for b in st.session_state.bots if b["id"] == session["bot_id"])
+    except StopIteration:
+        logger.error("No bot found with the specified ID.")
+        st.info("There is no bot available.")
+        st.stop()
+    
+    # Set the name of the session
+    name = session["name"] or bot["name"]
+    
+    # Display the title and captions
+    st.title(name)
+    st.caption(f"Bot: {bot['name']}")
+    st.caption(f"模型: {model['name']}")
+
+    # Define the system prompt
+    system_prompt = {"role": "system", "content": bot["prompt"]}
+
+    # Initialize the OpenAI client
+    client = initialize_openai_client(model["api_key"], model["base_url"])
+
+    # Display the chat messages
+    display_chat_messages(session["messages"])
+
+    # Handle user input
+    handle_user_input(session, client, model["model"], [system_prompt] if system_prompt["content"].strip() != "" else [], db)
 
 # Function to handle the streaming of chat responses
 def write_stream(stream):

@@ -8,17 +8,92 @@ import logging
 
 import yaml
 from yaml.loader import SafeLoader
-
 from botpage import botpage
+
+from streamlit.runtime.caching import cache_resource, cache_data
+from pymongo import MongoClient
+from datetime import datetime, timedelta, timezone
+
+@cache_resource(ttl=600)
+def get_db(mongo_uri, mongo_db):
+    """Get the MongoDB database."""
+    client = MongoClient(mongo_uri)
+    return client[mongo_db]
+
+def fetch_user_sessions(db, username, skip=0, limit=50):
+    """Fetch sessions for the current user from MongoDB."""
+    return list(
+        db.sessions.find({"user": username})
+        .sort("create_time", -1)
+        .skip(skip)
+        .limit(limit)
+    )
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Function to create a new session
+def create_new_session(username, bot_id):
+    """Create a new session for the user with the specified bot."""
+    return {
+        "id": int(time.time()),
+        "user": username,
+        "create_time": datetime.now(timezone.utc),
+        "name": None,
+        "bot_id": bot_id,
+        "messages": [],
+    }
+
 # Function to set the current session
 def set_current_session(session):
     """Set the current session in the Streamlit session state."""
     st.session_state.current_session = session
+
+def load_config(config_file):
+    """Load configuration from a file."""
+    try:
+        with open(config_file) as file:
+            return yaml.load(file, Loader=SafeLoader)
+    except FileNotFoundError:
+        logger.error(f"Configuration file not found: {config_file}")
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing configuration file: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error loading configuration: {e}")
+    return None
+
+def initialize_session_state(config, db):
+    """Initialize session state variables."""
+    if "bots" not in st.session_state or len(st.session_state.bots) != len(config["bots"]):
+        st.session_state.bots = config["bots"]
+    if "models" not in st.session_state or len(st.session_state.models) != len(config["models"]):
+        st.session_state.models = config["models"]
+    if "bot_sessions" not in st.session_state:
+        st.session_state.bot_sessions = [] if db is None else fetch_user_sessions(db, st.session_state["name"])
+
+    # Get the initial bot and model
+    try:
+        init_bot = next(b for b in st.session_state.bots)
+        init_model = next(m for m in st.session_state.models)
+    except StopIteration:
+        logger.error("No bots or models found in the configuration.")
+        st.info("There is no bot or model available.")
+        st.stop()
+
+    # Check if there are any bots or models
+    if not init_bot:
+        st.info("There is no bot")
+        st.stop()
+
+    if not init_model:
+        st.info("There is no model")
+        st.stop()
+
+    if "current_session" not in st.session_state:
+        st.session_state.current_session = create_new_session(st.session_state["name"], init_bot["id"])
+    if "current_model" not in st.session_state:
+        st.session_state.current_model = init_model
 
 # Set the page configuration
 st.set_page_config(
@@ -26,11 +101,8 @@ st.set_page_config(
 )
 
 # Load the configuration from the environment variable
-try:
-    with open(os.getenv("CONFIG_FILE")) as file:
-        config = yaml.load(file, Loader=SafeLoader)
-except Exception as e:
-    logger.error(f"Failed to load configuration: {e}")
+config = load_config(os.getenv("CONFIG_FILE"))
+if not config:
     st.error("Failed to load configuration. Please check the CONFIG_FILE environment variable.")
     st.stop()
 
@@ -49,47 +121,15 @@ authenticator.login()
 if st.session_state["authentication_status"]:
     # Log out the user
     authenticator.logout()
+
+    db = None
+    if os.getenv("MONGO_URI"):
+        db = get_db(os.getenv("MONGO_URI"), "ai-bots")
+    else:
+        logger.warning("MONGO_URI environment variable is not set. User sessions will not be fetched from the database.")
     
     # Ensure bots and models are loaded
-    if "bots" not in st.session_state or len(st.session_state.bots) != len(config["bots"]):
-        st.session_state.bots = config["bots"]
-    
-    if "models" not in st.session_state or len(st.session_state.models) != len(config["models"]):
-        st.session_state.models = config["models"]
-    
-    # Initialize bot sessions
-    if "bot_sessions" not in st.session_state:
-        st.session_state.bot_sessions = []
-    
-    # Get the initial bot and model
-    try:
-        init_bot = next(b for b in st.session_state.bots)
-        init_model = next(m for m in st.session_state.models)
-    except StopIteration:
-        logger.error("No bots or models found in the configuration.")
-        st.info("There is no bot or model available.")
-        st.stop()
-    
-    # Check if there are any bots or models
-    if not init_bot:
-        st.info("There is no bot")
-        st.stop()
-    
-    if not init_model:
-        st.info("There is no model")
-        st.stop()
-    
-    # Set the current session and model
-    if "current_session" not in st.session_state:
-        st.session_state.current_session = {
-            "id": int(time.time()),
-            "name": None,
-            "bot_id": init_bot["id"],
-            "messages": [],
-        }
-    
-    if "current_model" not in st.session_state:
-        st.session_state.current_model = init_model
+    initialize_session_state(config, db)
     
     # Sidebar for model selection
     with st.sidebar:
@@ -119,31 +159,42 @@ if st.session_state["authentication_status"]:
             st.button(
                 bot["name"],
                 on_click=set_current_session,
-                args=(
-                    {
-                        "id": int(time.time()),
-                        "name": None,
-                        "bot_id": bot["id"],
-                        "messages": [],
-                    },
-                ),
+                args=(create_new_session(st.session_state["name"], bot["id"]),),
                 use_container_width=True,
             )
         
         # Session history buttons
         st.subheader("会话记录")
+
+        # Group sessions by date
+        grouped_sessions = {}
         for session in st.session_state.bot_sessions:
-            st.button(
-                session["name"],
-                key=session["id"],
-                on_click=set_current_session,
-                args=(session,),
-                disabled=session["id"] == st.session_state.current_session["id"],
-                use_container_width=True,
-            )
+            date = session["create_time"].strftime("%Y-%m-%d")
+            if date not in grouped_sessions:
+                grouped_sessions[date] = []
+            grouped_sessions[date].append(session)
+
+        # Display sessions grouped by date
+        for date in sorted(grouped_sessions.keys(), reverse=True):
+            st.markdown(f"### {date}")
+            for session in grouped_sessions[date]:
+                st.button(
+                    session["name"],
+                    key=session["id"],
+                    on_click=set_current_session,
+                    args=(session,),
+                    disabled=session["id"] == st.session_state.current_session["id"],
+                    use_container_width=True,
+                )
+
+        if db is not None:
+            if st.button("Load more", use_container_width=True):
+                skip = len(st.session_state.bot_sessions)
+                additional_sessions = fetch_user_sessions(db, st.session_state["name"], skip=skip)
+                st.session_state.bot_sessions.extend(additional_sessions)
     
     # Display the bot page
-    botpage()
+    botpage(db)
 
 # Handle authentication errors
 elif st.session_state["authentication_status"] is False:
