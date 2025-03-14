@@ -10,15 +10,22 @@ def get_next_bot_id(db):
 
 def add_bot(db, bot_data):
     """Add a new bot to MongoDB."""
-    bot_data["id"] = get_next_bot_id(db)
-    db.bots.insert_one(bot_data)
-    st.session_state.refresh_bots = True
-    return bot_data
+    try:
+        bot_data["id"] = get_next_bot_id(db)
+        result = db.bots.insert_one(bot_data)
+        st.session_state.refresh_bots = True
+        return bot_data
+    except Exception as e:
+        st.error(f"Error adding bot to MongoDB: {str(e)}")
+        return None
 
 def update_bot(db, bot_id, bot_data):
     """Update an existing bot in MongoDB."""
-    db.bots.update_one({"id": bot_id}, {"$set": bot_data})
-    st.session_state.refresh_bots = True
+    try:
+        result = db.bots.update_one({"id": bot_id}, {"$set": bot_data})
+        st.session_state.refresh_bots = True
+    except Exception as e:
+        st.error(f"Error updating bot in MongoDB: {str(e)}")
 
 def delete_bot(db, bot_id):
     """Delete a bot from MongoDB."""
@@ -27,7 +34,7 @@ def delete_bot(db, bot_id):
 
 def show_bot_form(db, existing_bot=None):
     """Show form for adding or editing a bot."""
-    with st.form(key=f"bot_form_{time.time()}"):
+    with st.form(key=f"bot_form"):
         bot_name = st.text_input("Bot Name", value=existing_bot.get("name", "") if existing_bot else "")
         bot_prompt = st.text_area("Bot Prompt", value=existing_bot.get("prompt", "") if existing_bot else "", height=200)
         
@@ -36,7 +43,7 @@ def show_bot_form(db, existing_bot=None):
             submit = st.form_submit_button("Save")
         with col2:
             cancel = st.form_submit_button("Cancel")
-            
+
         if submit and bot_name and bot_prompt:
             bot_data = {
                 "name": bot_name,
@@ -64,8 +71,14 @@ def bot_management_page(db):
         st.error("Database connection is required for bot management.")
         return
     
-    # Fetch the current bots
-    bots = list(db.bots.find().sort("id", 1))
+    # Check if bots need refreshing
+    if st.session_state.get("refresh_bots", False):
+        # Fetch the current bots - this will happen in app.py initialize_session_state
+        st.session_state.refresh_bots = False
+        st.rerun()
+    else:
+        # Fetch the current bots
+        bots = list(db.bots.find().sort("id", 1))
     
     # Initialize state variables if they don't exist
     if "edit_bot_id" not in st.session_state:
@@ -89,6 +102,9 @@ def bot_management_page(db):
     
     # List existing bots
     st.subheader("Existing Bots")
+    
+    # Get bots from session state to ensure they're up to date
+    bots = st.session_state.bots
     
     if not bots:
         st.info("No bots available. Add a new bot to get started.")

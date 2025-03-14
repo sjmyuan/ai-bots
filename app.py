@@ -86,7 +86,9 @@ def initialize_session_state(config, db):
     
     # Initialize bots from MongoDB or fallback to config
     if db is not None:
-        if "bots" not in st.session_state or st.session_state.get("refresh_bots", False):
+        # Always set refresh_bots to False to avoid infinite refreshes
+        refresh_needed = st.session_state.get("refresh_bots", False)
+        if "bots" not in st.session_state or refresh_needed:
             st.session_state.bots = initialize_bots(db, config.get("bots", []))
             st.session_state.refresh_bots = False
     elif "bots" not in st.session_state:
@@ -119,6 +121,9 @@ def initialize_session_state(config, db):
         st.session_state.current_model = init_model
     if "current_page" not in st.session_state:
         st.session_state.current_page = "chat"
+    # Ensure refresh_bots is defined
+    if "refresh_bots" not in st.session_state:
+        st.session_state.refresh_bots = False
 
 def set_page(page_name):
     """Set the current page in the session state."""
