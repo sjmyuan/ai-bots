@@ -9,6 +9,7 @@ import logging
 import yaml
 from yaml.loader import SafeLoader
 from botpage import botpage
+from bot_management import bot_management_page
 
 from streamlit.runtime.caching import cache_resource, cache_data
 from pymongo import MongoClient
@@ -28,6 +29,20 @@ def fetch_user_sessions(db, username, skip=0, limit=50):
         .skip(skip)
         .limit(limit)
     )
+
+def fetch_bots(db):
+    """Fetch all bots from MongoDB."""
+    return list(db.bots.find().sort("id", 1))
+
+def initialize_bots(db, config_bots):
+    """Initialize bots from MongoDB or create from config if none exist."""
+    bots = fetch_bots(db)
+    if not bots and config_bots:
+        # Insert config bots into MongoDB if the collection is empty
+        for bot in config_bots:
+            db.bots.insert_one(bot)
+        return config_bots
+    return bots
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -65,10 +80,18 @@ def load_config(config_file):
 
 def initialize_session_state(config, db):
     """Initialize session state variables."""
-    if "bots" not in st.session_state or len(st.session_state.bots) != len(config["bots"]):
-        st.session_state.bots = config["bots"]
+    # Initialize models from config
     if "models" not in st.session_state or len(st.session_state.models) != len(config["models"]):
         st.session_state.models = config["models"]
+    
+    # Initialize bots from MongoDB or fallback to config
+    if db is not None:
+        if "bots" not in st.session_state or st.session_state.get("refresh_bots", False):
+            st.session_state.bots = initialize_bots(db, config.get("bots", []))
+            st.session_state.refresh_bots = False
+    elif "bots" not in st.session_state:
+        st.session_state.bots = config.get("bots", [])
+    
     if "bot_sessions" not in st.session_state:
         st.session_state.bot_sessions = [] if db is None else fetch_user_sessions(db, st.session_state["name"])
 
@@ -94,6 +117,12 @@ def initialize_session_state(config, db):
         st.session_state.current_session = create_new_session(st.session_state["name"], init_bot["id"])
     if "current_model" not in st.session_state:
         st.session_state.current_model = init_model
+    if "current_page" not in st.session_state:
+        st.session_state.current_page = "chat"
+
+def set_page(page_name):
+    """Set the current page in the session state."""
+    st.session_state.current_page = page_name
 
 # Set the page configuration
 st.set_page_config(
@@ -131,70 +160,85 @@ if st.session_state["authentication_status"]:
     # Ensure bots and models are loaded
     initialize_session_state(config, db)
     
-    # Sidebar for model selection
+    # Navigation
     with st.sidebar:
-        selected_model = st.selectbox(
-            "选择模型",
-            st.session_state.models,
-            next(
-                index
-                for index, value in enumerate(st.session_state.models)
-                if value["id"] == st.session_state.current_model["id"]
-            ),
-            lambda m: m["name"],
-        )
-
-        # Handle custom model input
-        if selected_model["id"] == -1:
-            custom_model_name = st.text_input("输入模型名称")
-            selected_model["name"] = custom_model_name
-            selected_model["model"] = custom_model_name
-            st.session_state.current_model = selected_model
-        else:
-            st.session_state.current_model = selected_model
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Chat", use_container_width=True, 
+                        type="primary" if st.session_state.current_page == "chat" else "secondary"):
+                set_page("chat")
+        with col2:
+            if st.button("Manage Bots", use_container_width=True,
+                        type="primary" if st.session_state.current_page == "manage_bots" else "secondary"):
+                set_page("manage_bots")
         
-        # New conversation buttons
-        st.subheader("新建对话")
-        for bot in st.session_state.bots:
-            st.button(
-                bot["name"],
-                on_click=set_current_session,
-                args=(create_new_session(st.session_state["name"], bot["id"]),),
-                use_container_width=True,
+        if st.session_state.current_page == "chat":
+            # Model selection
+            selected_model = st.selectbox(
+                "选择模型",
+                st.session_state.models,
+                next(
+                    index
+                    for index, value in enumerate(st.session_state.models)
+                    if value["id"] == st.session_state.current_model["id"]
+                ),
+                lambda m: m["name"],
             )
-        
-        # Session history buttons
-        st.subheader("会话记录")
 
-        # Group sessions by date
-        grouped_sessions = {}
-        for session in st.session_state.bot_sessions:
-            date = session["create_time"].strftime("%Y-%m-%d")
-            if date not in grouped_sessions:
-                grouped_sessions[date] = []
-            grouped_sessions[date].append(session)
-
-        # Display sessions grouped by date
-        for date in sorted(grouped_sessions.keys(), reverse=True):
-            st.markdown(f"### {date}")
-            for session in grouped_sessions[date]:
+            # Handle custom model input
+            if selected_model["id"] == -1:
+                custom_model_name = st.text_input("输入模型名称")
+                selected_model["name"] = custom_model_name
+                selected_model["model"] = custom_model_name
+                st.session_state.current_model = selected_model
+            else:
+                st.session_state.current_model = selected_model
+            
+            # New conversation buttons
+            st.subheader("新建对话")
+            for bot in st.session_state.bots:
                 st.button(
-                    session["name"],
-                    key=session["id"],
+                    bot["name"],
                     on_click=set_current_session,
-                    args=(session,),
-                    disabled=session["id"] == st.session_state.current_session["id"],
+                    args=(create_new_session(st.session_state["name"], bot["id"]),),
                     use_container_width=True,
                 )
+            
+            # Session history buttons
+            st.subheader("会话记录")
 
-        if db is not None:
-            if st.button("Load more", use_container_width=True):
-                skip = len(st.session_state.bot_sessions)
-                additional_sessions = fetch_user_sessions(db, st.session_state["name"], skip=skip)
-                st.session_state.bot_sessions.extend(additional_sessions)
+            # Group sessions by date
+            grouped_sessions = {}
+            for session in st.session_state.bot_sessions:
+                date = session["create_time"].strftime("%Y-%m-%d")
+                if date not in grouped_sessions:
+                    grouped_sessions[date] = []
+                grouped_sessions[date].append(session)
+
+            # Display sessions grouped by date
+            for date in sorted(grouped_sessions.keys(), reverse=True):
+                st.markdown(f"### {date}")
+                for session in grouped_sessions[date]:
+                    st.button(
+                        session["name"],
+                        key=session["id"],
+                        on_click=set_current_session,
+                        args=(session,),
+                        disabled=session["id"] == st.session_state.current_session["id"],
+                        use_container_width=True,
+                    )
+
+            if db is not None:
+                if st.button("Load more", use_container_width=True):
+                    skip = len(st.session_state.bot_sessions)
+                    additional_sessions = fetch_user_sessions(db, st.session_state["name"], skip=skip)
+                    st.session_state.bot_sessions.extend(additional_sessions)
     
-    # Display the bot page
-    botpage(db)
+    # Display the appropriate page based on current_page
+    if st.session_state.current_page == "chat":
+        botpage(db)
+    elif st.session_state.current_page == "manage_bots":
+        bot_management_page(db)
 
 # Handle authentication errors
 elif st.session_state["authentication_status"] is False:
