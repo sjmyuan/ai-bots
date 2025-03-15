@@ -2,11 +2,8 @@ import streamlit as st
 import time
 
 def get_next_bot_id(db):
-    """Get the next available bot ID."""
-    highest_bot = db.bots.find_one(sort=[("id", -1)])
-    if highest_bot:
-        return highest_bot["id"] + 1
-    return 1
+    """Get the next available bot ID using epoch seconds."""
+    return int(time.time())
 
 def add_bot(db, bot_data):
     """Add a new bot to MongoDB."""
@@ -28,8 +25,12 @@ def update_bot(db, bot_id, bot_data):
         st.error(f"Error updating bot in MongoDB: {str(e)}")
 
 def delete_bot(db, bot_id):
-    """Delete a bot from MongoDB."""
+    """Delete a bot and its associated sessions from MongoDB."""
+    # Delete the bot
     db.bots.delete_one({"id": bot_id})
+    # Delete all sessions associated with this bot
+    db.sessions.delete_many({"bot_id": bot_id})
+    # TODO: Need to consider reset current session if the current bot is deleted
     st.session_state.refresh_bots = True
 
 def show_bot_form(db, existing_bot=None):

@@ -88,14 +88,16 @@ def initialize_session_state(config, db):
     if db is not None:
         # Always set refresh_bots to False to avoid infinite refreshes
         refresh_needed = st.session_state.get("refresh_bots", False)
-        if "bots" not in st.session_state or refresh_needed:
+        if "bots" not in st.session_state or "bot_sessions" not in st.session_state or refresh_needed:
             st.session_state.bots = initialize_bots(db, config.get("bots", []))
+            st.session_state.bot_sessions = fetch_user_sessions(db, st.session_state["name"])
             st.session_state.refresh_bots = False
-    elif "bots" not in st.session_state:
-        st.session_state.bots = config.get("bots", [])
-    
-    if "bot_sessions" not in st.session_state:
-        st.session_state.bot_sessions = [] if db is None else fetch_user_sessions(db, st.session_state["name"])
+    else:
+        if "bots" not in st.session_state:
+            st.session_state.bots = config.get("bots", [])
+
+        if "bot_sessions" not in st.session_state:
+            st.session_state.bot_sessions = []
 
     # Get the initial bot and model
     try:
