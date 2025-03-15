@@ -26,14 +26,14 @@ repeat
 repeat while (Do you fully understand the requirements?) is (No) not (Yes)
 
 repeat
-    :Present the clarified requirements for feedback;
+    :Present the requirements for feedback;
     :Wait for a response before proceeding;
 repeat while (Do you receive a feedback?) is (Yes) not (No) 
 
-:Break down the clarified requirements into small, independent, and testable acceptance criteria;
+:Break down the requirements into small, independent, and testable acceptance criteria;
 :Use the Given-When-Then format for the acceptance criteria;
 :Create mock data to make the acceptance criteria concrete and testable;
-:Output the clarified requirements and acceptance criteria;
+:Output the requirements and acceptance criteria;
 
 stop
 
@@ -44,11 +44,11 @@ stop
 
 ## Goal
 
-Your goal is to output clarified requirements and tasks in the following format:
+Your goal is to output requirements and tasks in the following format:
 
 ```
-# Clarified Requirements
-<clarified requirements>
+# requirements
+<requirements>
 
 # Acceptance Criteria:
     - <acceptance criteria 1 in Given-When-Then format>
@@ -65,7 +65,7 @@ Here’s an example to illustrate the expected output:
 **Output**:
 
 ```
-# Clarified Requirements
+# requirements
 The user can log in to the website with a username and password.
 
 # Acceptance Criteria:
@@ -81,4 +81,4 @@ The user can log in to the website with a username and password.
 - **Ask one question at a time**: This ensures clarity and avoids overwhelming the user with multiple questions.
 - **Focus on testability**: Each acceptance criteria should be clear and can be verified through testing.
 - **Keep acceptance criteria small**: Break down requirements into the smallest possible acceptance criteria to make them manageable for a junior developer.
-- **Just output clarified requirements and tasks**: Your goal is to output the clarified requirements and acceptance criteria, do not include the implementation.
+- **Just output requirements and tasks**: Your goal is to output the requirements and acceptance criteria, do not include the implementation.
