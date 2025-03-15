@@ -167,16 +167,12 @@ if st.session_state["authentication_status"]:
     
     # Navigation
     with st.sidebar:
-        col1, col2 = st.columns(2)
-        with col1:
+        st.markdown("## Navigation")
+        if st.session_state.current_page == "manage_bots":
             if st.button("Chat", use_container_width=True, 
                         type="primary" if st.session_state.current_page == "chat" else "secondary"):
                 set_page("chat")
-        with col2:
-            if st.button("Manage Bots", use_container_width=True,
-                        type="primary" if st.session_state.current_page == "manage_bots" else "secondary"):
-                set_page("manage_bots")
-        
+
         if st.session_state.current_page == "chat":
             # Model selection
             selected_model = st.selectbox(
@@ -208,6 +204,11 @@ if st.session_state["authentication_status"]:
                     args=(create_new_session(st.session_state["name"], bot["id"]),),
                     use_container_width=True,
                 )
+            
+            # Manage Bots button
+            if st.button("Manage Bots", use_container_width=True,
+                        type="primary" if st.session_state.current_page == "manage_bots" else "secondary"):
+                set_page("manage_bots")
             
             # Session history buttons
             st.subheader("会话记录")
