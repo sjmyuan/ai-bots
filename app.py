@@ -13,7 +13,7 @@ from bot_management import bot_management_page
 
 from streamlit.runtime.caching import cache_resource, cache_data
 from pymongo import MongoClient
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 @cache_resource(ttl=600)
 def get_db(mongo_uri, mongo_db):
@@ -54,7 +54,7 @@ def create_new_session(username, bot_id):
     return {
         "id": int(time.time()),
         "user": username,
-        "create_time": datetime.now(timezone.utc),
+        "create_time": datetime.now(),
         "name": None,
         "bot_id": bot_id,
         "messages": [],

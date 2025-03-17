@@ -1,6 +1,6 @@
 # Import necessary libraries
 from openai import OpenAI
-from datetime import datetime,timezone
+from datetime import datetime
 import streamlit as st
 import logging
 import os
@@ -26,7 +26,7 @@ def save_session_to_db(db, session):
             "$set": {
                 "user": session["user"],
                 "name": session["name"],
-                "create_time": session.get("create_time", datetime.now(timezone.utc)),
+                "create_time": session.get("create_time", datetime.now()),
                 "bot_id": session["bot_id"],
                 "messages": session["messages"],
             }
