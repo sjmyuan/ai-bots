@@ -68,7 +68,7 @@ def handle_user_input(session, client, model, system_prompt_list, db):
                         system_prompt_list
                         + [
                             {"role": msg["role"], "content": msg["content"]}
-                            for msg in session["messages"][-7:]
+                            for msg in session["messages"]
                         ]
                     ),
                     stream=True,
