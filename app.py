@@ -226,7 +226,7 @@ if st.session_state["authentication_status"]:
             # Display sessions grouped by date
             for date in sorted(grouped_sessions.keys(), reverse=True):
                 st.markdown(f"### {date}")
-                for session in grouped_sessions[date]:
+                for session in sorted(grouped_sessions[date], key=lambda s: s["create_time"], reverse=True):
                     st.button(
                         session["name"],
                         key=session["id"],
