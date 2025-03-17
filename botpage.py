@@ -44,10 +44,68 @@ def initialize_openai_client(api_key, base_url):
         st.stop()
 
 def display_chat_messages(messages):
-    """Display chat messages."""
-    for msg in messages:
+    """Display chat messages with regenerate buttons for assistant messages."""
+    for i, msg in enumerate(messages):
         with st.chat_message(msg["role"]):
             st.markdown(quote_content(msg["reasoning_content"]) + msg["content"])
+            # Add regenerate button after assistant messages
+            if msg["role"] == "assistant" and i > 0:
+                if st.button("Regenerate", key=f"regenerate_{i}", help=" "):
+                    st.session_state.regenerate_index = i
+                    st.rerun()
+
+def handle_regeneration(session, client, model, system_prompt_list, db):
+    """Handle regeneration of assistant responses."""
+    if hasattr(st.session_state, 'regenerate_index'):
+        index = st.session_state.regenerate_index
+        
+        # Find the preceding user message
+        user_msg_index = index - 1
+        if user_msg_index >= 0 and session["messages"][user_msg_index]["role"] == "user":
+            # Truncate the conversation up to the user message
+            session["messages"] = session["messages"][:index]
+            
+            # Display all messages after regeneration
+            display_chat_messages(session["messages"])
+            
+            # Generate new assistant response
+            with st.chat_message("assistant"):
+                try:
+                    stream = client.chat.completions.create(
+                        model=model,
+                        messages=(
+                            system_prompt_list
+                            + [
+                                {"role": msg["role"], "content": msg["content"]}
+                                for msg in session["messages"]
+                            ]
+                        ),
+                        stream=True,
+                    )
+                    
+                    # Write the stream to the chat
+                    response, reasoning_response = write_stream(stream)
+                except Exception as e:
+                    logger.error(f"Failed to create chat completion: {e}")
+                    st.error("Failed to create chat completion. Please check the model and messages.")
+                    st.stop()
+                    
+                # Update the conversation with the new assistant message
+                session["messages"].append({
+                    "role": "assistant",
+                    "content": response,
+                    "reasoning_content": reasoning_response,
+                })
+                
+                # Save the updated session to the database
+                save_session_to_db(db, session)
+                
+            # Clear regeneration state
+            del st.session_state.regenerate_index
+            
+            return True
+    
+    return False
 
 def handle_user_input(session, client, model, system_prompt_list, db):
     """Handle user input and generate assistant response."""
@@ -119,15 +177,16 @@ def botpage(db):
 
     # Define the system prompt
     system_prompt = {"role": "system", "content": bot["prompt"]}
+    system_prompt_list = [system_prompt] if system_prompt["content"].strip() != "" else []
 
     # Initialize the OpenAI client
     client = initialize_openai_client(model["api_key"], model["base_url"])
 
-    # Display the chat messages
-    display_chat_messages(session["messages"])
-
-    # Handle user input
-    handle_user_input(session, client, model["model"], [system_prompt] if system_prompt["content"].strip() != "" else [], db)
+    # Check if we need to handle regeneration
+    if not handle_regeneration(session, client, model["model"], system_prompt_list, db):
+        # If no regeneration, display messages and handle input as normal
+        display_chat_messages(session["messages"])
+        handle_user_input(session, client, model["model"], system_prompt_list, db)
 
 # Function to handle the streaming of chat responses
 def write_stream(stream):
