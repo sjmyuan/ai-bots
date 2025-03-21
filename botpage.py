@@ -51,10 +51,10 @@ def display_chat_messages(messages):
             message_content = quote_content(msg["reasoning_content"]) + msg["content"]
             st.markdown(message_content)
             
-            # Use columns to position the button at the bottom left
-            cols = st.columns([1, 10])
-            with cols[0]:
-                st_copy_to_clipboard(msg["content"], key=f"copy_{hash(msg['content'])}_{idx}")
+        # Use columns to position the button at the bottom left
+        cols = st.columns([10, 1])
+        with cols[1]:
+            st_copy_to_clipboard(msg["content"], key=f"copy_{hash(msg['content'])}_{idx}")
 
 def handle_user_input(session, client, model, system_prompt_list, db):
     """Handle user input and generate assistant response."""
@@ -65,9 +65,9 @@ def handle_user_input(session, client, model, system_prompt_list, db):
         # Display the user message
         with st.chat_message("user"):
             st.markdown(prompt)
-            cols = st.columns([1, 10])
-            with cols[0]:
-                st_copy_to_clipboard(prompt, key=f"copy_{hash(prompt)}_input_latest")
+        cols = st.columns([10, 1])
+        with cols[1]:
+            st_copy_to_clipboard(prompt, key=f"copy_{hash(prompt)}_input_latest")
 
         # Create the chat completion stream
         try:
@@ -86,9 +86,9 @@ def handle_user_input(session, client, model, system_prompt_list, db):
 
                 # Write the stream to the chat
                 response, reasoning_response = write_stream(stream)
-                cols = st.columns([1, 10])
-                with cols[0]:
-                    st_copy_to_clipboard(response, key=f"copy_{hash(response)}_output_latest")
+            cols = st.columns([10, 1])
+            with cols[1]:
+                st_copy_to_clipboard(response, key=f"copy_{hash(response)}_output_latest")
         except Exception as e:
             logger.error(f"Failed to create chat completion: {e}")
             st.error("Failed to create chat completion. Please check the model and messages.")
