@@ -29,7 +29,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 COPY app.py .
 COPY botpage.py .
 COPY bot_management.py .
-COPY st_copy_to_clipboard .
+COPY st_copy_to_clipboard/ .
 
 # 暴露 Streamlit 的默认端口
 EXPOSE 8501
