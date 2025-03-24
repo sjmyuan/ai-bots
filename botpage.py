@@ -44,16 +44,33 @@ def initialize_openai_client(api_key, base_url):
         st.error("Failed to initialize OpenAI client. Please check the API key and base URL.")
         st.stop()
 
-def display_chat_messages(messages):
+def display_chat_messages(messages, session, db):
     """Display chat messages."""
     for idx, msg in enumerate(messages):
+        if msg["role"] == "truncation":
+            # Display truncation message as a gray line
+            st.markdown("<hr style='border-top: 1px solid #ccc; margin: 10px 0;'><div style='text-align: center; color: #888;'>truncated</div>", unsafe_allow_html=True)
+            continue
+            
         with st.chat_message(msg["role"]):
             message_content = quote_content(msg["reasoning_content"]) + msg["content"]
             st.markdown(message_content)
             
-        # Use columns to position the button at the bottom left
-        cols = st.columns([10, 1])
-        with cols[1]:
+        # Use columns to position the buttons at the bottom right
+        # If this is the last message and not generating a response, add the truncate button
+        cols = st.columns([8, 1, 1])
+        if idx == len(messages) - 1 and not st.session_state.get("generating_response", False):
+            with cols[1]:
+                if st.button("✂️", key="truncate_button"):
+                    # Insert truncation message
+                    session["messages"].append({
+                        "role": "truncation",
+                        "content": "",
+                        "reasoning_content": ""
+                    })
+                    save_session_to_db(db, session)
+                    st.rerun()  # Refresh the UI to show the truncation
+        with cols[2]:
             st_copy_to_clipboard(msg["content"], key=f"copy_{hash(msg['content'])}_{idx}")
 
 def handle_user_input(session, client, model, system_prompt_list, db):
@@ -65,31 +82,72 @@ def handle_user_input(session, client, model, system_prompt_list, db):
         # Display the user message
         with st.chat_message("user"):
             st.markdown(prompt)
-        cols = st.columns([10, 1])
-        with cols[1]:
+        cols = st.columns([8, 1, 1])
+        with cols[2]:
             st_copy_to_clipboard(prompt, key=f"copy_{hash(prompt)}_input_latest")
 
         # Create the chat completion stream
         try:
             with st.chat_message("assistant"):
+                # Set flag to indicate response is being generated
+                st.session_state.generating_response = True
+                
+                # Get messages after the last truncation efficiently (reverse search)
+                messages_to_send = []
+                found_truncation = False
+                
+                # Scan messages from newest to oldest
+                for msg in reversed(session["messages"]):
+                    if msg["role"] == "truncation":
+                        found_truncation = True
+                        break
+                    messages_to_send.insert(0, {
+                        "role": msg["role"],
+                        "content": msg["content"]
+                    })
+                
+                # If truncation was found, modify the first user message
+                if found_truncation and messages_to_send:
+                    first_user_idx = next((i for i, msg in enumerate(messages_to_send) if msg["role"] == "user"), None)
+                    if first_user_idx is not None:
+                        messages_to_send[first_user_idx]["content"] = f"<user_input>{messages_to_send[first_user_idx]['content']}</user_input>"
+                
+                # If no truncation found, use all messages
+                if not found_truncation:
+                    messages_to_send = [
+                        {"role": msg["role"], "content": msg["content"]}
+                        for msg in session["messages"]
+                    ]
+                
                 stream = client.chat.completions.create(
                     model=model,
-                    messages=(
-                        system_prompt_list
-                        + [
-                            {"role": msg["role"], "content": msg["content"]}
-                            for msg in session["messages"]
-                        ]
-                    ),
+                    messages=system_prompt_list + messages_to_send,
                     stream=True,
                 )
 
                 # Write the stream to the chat
                 response, reasoning_response = write_stream(stream)
-            cols = st.columns([10, 1])
+                
+                # Reset the generating response flag
+                st.session_state.generating_response = False
+                
+                
+            cols = st.columns([8, 1, 1])
+            with cols[2]:
+                st_copy_to_clipboard(response, key=f"copy_{hash(response)}_output_latest_2")
             with cols[1]:
-                st_copy_to_clipboard(response, key=f"copy_{hash(response)}_output_latest")
+                if st.button("✂️", key="truncate_button_after_response"):
+                    # Insert truncation message
+                    session["messages"].append({
+                        "role": "truncation",
+                        "content": "",
+                        "reasoning_content": ""
+                    })
+                    save_session_to_db(db, session)
+                    st.rerun()  # Refresh the UI to show the truncation
         except Exception as e:
+            # Reset the generating response flag in case of error
+            st.session_state.generating_response = False
             logger.error(f"Failed to create chat completion: {e}")
             st.error("Failed to create chat completion. Please check the model and messages.")
             st.stop()
@@ -136,8 +194,12 @@ def botpage(db):
     # Initialize the OpenAI client
     client = initialize_openai_client(model["api_key"], model["base_url"])
 
+    # Initialize the session state for generating_response if not already set
+    if "generating_response" not in st.session_state:
+        st.session_state.generating_response = False
+
     # Display the chat messages
-    display_chat_messages(session["messages"])
+    display_chat_messages(session["messages"], session, db)
 
     # Handle user input
     handle_user_input(session, client, model["model"], [system_prompt] if system_prompt["content"].strip() != "" else [], db)
