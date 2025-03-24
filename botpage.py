@@ -108,14 +108,14 @@ def handle_user_input(session, client, model, system_prompt_list, db):
                         break
                     messages_to_send.insert(0, {
                         "role": msg["role"],
-                        "content": msg["content"]
+                        "content": f"<user_input>{msg['content']}</user_input>"
                     })
                 
                 # If truncation was found, modify the first user message
-                if found_truncation and messages_to_send:
-                    first_user_idx = next((i for i, msg in enumerate(messages_to_send) if msg["role"] == "user"), None)
-                    if first_user_idx is not None:
-                        messages_to_send[first_user_idx]["content"] = f"<user_input>{messages_to_send[first_user_idx]['content']}</user_input>"
+                #if found_truncation and messages_to_send:
+                #    first_user_idx = next((i for i, msg in enumerate(messages_to_send) if msg["role"] == "user"), None)
+                #    if first_user_idx is not None:
+                #        messages_to_send[first_user_idx]["content"] = f"<user_input>{messages_to_send[first_user_idx]['content']}</user_input>"
                 
                 # If no truncation found, use all messages
                 if not found_truncation:
