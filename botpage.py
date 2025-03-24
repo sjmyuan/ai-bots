@@ -48,8 +48,13 @@ def display_chat_messages(session, db):
     """Display chat messages."""
     for idx, msg in enumerate(session["messages"]):
         if msg["role"] == "truncation":
-            # Display truncation message as a gray line
-            st.markdown("<hr style='border-top: 1px solid #ccc; margin: 10px 0;'><div style='text-align: center; color: #888;'>truncated</div>", unsafe_allow_html=True)
+            # Display truncation message as a line crossing directly through the text
+            st.markdown("""
+                <div style='position: relative; text-align: center; margin: 20px 0; height: 20px;'>
+                    <hr style='position: absolute; width: 100%; top: 10px; border: none; border-top: 1px solid #ccc; margin: 0;'>
+                    <span style='position: absolute; top: 0; left: 50%; transform: translateX(-50%); background-color: #f0f2f6; padding: 0 10px; color: #888; font-size: 0.8rem;'>truncated</span>
+                </div>
+            """, unsafe_allow_html=True)
             continue
             
         with st.chat_message(msg["role"]):
