@@ -44,9 +44,9 @@ def initialize_openai_client(api_key, base_url):
         st.error("Failed to initialize OpenAI client. Please check the API key and base URL.")
         st.stop()
 
-def display_chat_messages(messages, session, db):
+def display_chat_messages(session, db):
     """Display chat messages."""
-    for idx, msg in enumerate(messages):
+    for idx, msg in enumerate(session["messages"]):
         if msg["role"] == "truncation":
             # Display truncation message as a gray line
             st.markdown("<hr style='border-top: 1px solid #ccc; margin: 10px 0;'><div style='text-align: center; color: #888;'>truncated</div>", unsafe_allow_html=True)
@@ -59,7 +59,7 @@ def display_chat_messages(messages, session, db):
         # Use columns to position the buttons at the bottom right
         # If this is the last message and not generating a response, add the truncate button
         cols = st.columns([8, 1, 1])
-        if idx == len(messages) - 1 and not st.session_state.get("generating_response", False):
+        if idx == len(session["messages"]) - 1 and not st.session_state.get("generating_response", False):
             with cols[1]:
                 if st.button("✂️", key="truncate_button"):
                     # Insert truncation message
@@ -144,7 +144,6 @@ def handle_user_input(session, client, model, system_prompt_list, db):
                         "reasoning_content": ""
                     })
                     save_session_to_db(db, session)
-                    st.rerun()  # Refresh the UI to show the truncation
         except Exception as e:
             # Reset the generating response flag in case of error
             st.session_state.generating_response = False
@@ -165,6 +164,8 @@ def handle_user_input(session, client, model, system_prompt_list, db):
             st.session_state.bot_sessions.append(session)
 
         save_session_to_db(db, session)
+
+        st.rerun()  # Refresh the UI to show the truncation
 
 # Main function to handle the bot page
 def botpage(db):
@@ -199,7 +200,7 @@ def botpage(db):
         st.session_state.generating_response = False
 
     # Display the chat messages
-    display_chat_messages(session["messages"], session, db)
+    display_chat_messages(session, db)
 
     # Handle user input
     handle_user_input(session, client, model["model"], [system_prompt] if system_prompt["content"].strip() != "" else [], db)
