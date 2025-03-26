@@ -84,13 +84,6 @@ def handle_user_input(session, client, model, system_prompt_list, db):
         # Append the user message to the session
         session["messages"].append({"role": "user", "content": prompt, "reasoning_content": ""})
 
-        # Display the user message
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        cols = st.columns([8, 1, 1])
-        with cols[2]:
-            st_copy_to_clipboard(prompt, key=f"copy_{hash(prompt)}_input_latest")
-
         # Create the chat completion stream
         try:
             with st.chat_message("assistant"):
@@ -137,18 +130,6 @@ def handle_user_input(session, client, model, system_prompt_list, db):
                 st.session_state.generating_response = False
                 
                 
-            cols = st.columns([8, 1, 1])
-            with cols[2]:
-                st_copy_to_clipboard(response, key=f"copy_{hash(response)}_output_latest_2")
-            with cols[1]:
-                if st.button("✂️", key="truncate_button_after_response"):
-                    # Insert truncation message
-                    session["messages"].append({
-                        "role": "truncation",
-                        "content": "",
-                        "reasoning_content": ""
-                    })
-                    save_session_to_db(db, session)
         except Exception as e:
             # Reset the generating response flag in case of error
             st.session_state.generating_response = False
