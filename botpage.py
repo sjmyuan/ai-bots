@@ -63,9 +63,19 @@ def display_chat_messages(session, db):
             
         # Use columns to position the buttons at the bottom right
         # If this is the last message and not generating a response, add the truncate button
-        cols = st.columns([8, 1, 1])
+        cols = st.columns([7, 1, 1, 1])
         if idx == len(session["messages"]) - 1 and not st.session_state.get("generating_response", False):
-            with cols[1]:
+            # Add retry button for the last assistant message
+            if msg["role"] == "assistant":
+                with cols[1]:
+                    if st.button("🔄", key="retry_button"):
+                        # Set flag to trigger regeneration
+                        st.session_state.retry_last_message = True
+                        # Remove the last assistant message
+                        session["messages"].pop()
+                        save_session_to_db(db, session)
+                        st.rerun()
+            with cols[2]:
                 if st.button("✂️", key="truncate_button"):
                     # Insert truncation message
                     session["messages"].append({
@@ -75,14 +85,23 @@ def display_chat_messages(session, db):
                     })
                     save_session_to_db(db, session)
                     st.rerun()  # Refresh the UI to show the truncation
-        with cols[2]:
+        with cols[3]:
             st_copy_to_clipboard(msg["content"], key=f"copy_{hash(msg['content'])}_{idx}")
 
 def handle_user_input(session, client, model, system_prompt_list, db):
     """Handle user input and generate assistant response."""
-    if prompt := st.chat_input():
-        # Append the user message to the session
-        session["messages"].append({"role": "user", "content": prompt, "reasoning_content": ""})
+    # Check if we need to retry the last message
+    retry_mode = False
+    if st.session_state.get("retry_last_message", False):
+        # Reset the flag
+        st.session_state.retry_last_message = False
+        retry_mode = True
+
+    if prompt := st.chat_input() or retry_mode:
+        # In retry mode, we don't need a new user prompt
+        if not retry_mode:
+            # Append the user message to the session
+            session["messages"].append({"role": "user", "content": prompt, "reasoning_content": ""})
 
         # Create the chat completion stream
         try:
@@ -184,6 +203,10 @@ def botpage(db):
     # Initialize the session state for generating_response if not already set
     if "generating_response" not in st.session_state:
         st.session_state.generating_response = False
+
+    # Initialize the retry flag if not already set
+    if "retry_last_message" not in st.session_state:
+        st.session_state.retry_last_message = False
 
     # Display the chat messages
     display_chat_messages(session, db)
