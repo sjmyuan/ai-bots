@@ -1,21 +1,29 @@
+body {
+  margin: 0px;
+  padding: 0px;
+}
+
 .st-copy-to-clipboard-btn {
   display: inline-flex;
-  -moz-box-align: center;
+  -webkit-box-align: center;
   align-items: center;
-  -moz-box-pack: center;
+  -webkit-box-pack: center;
   justify-content: center;
   font-weight: 400;
-  /*padding: 0.25rem 0.75rem;
+  padding: 0.25rem 0.75rem;
   border-radius: 0.5rem;
-  min-height: 38.4px;*/
+  min-height: 2.5rem;
   margin: 0px;
-  /*line-height: 1.6;*/
+  line-height: 1.6;
+  text-transform: none;
+  font-size: inherit;
+  font-family: inherit;
   color: inherit;
   width: auto;
+  cursor: pointer;
   user-select: none;
   background-color: rgb(255, 255, 255);
   border: 1px solid rgba(49, 51, 63, 0.2);
-  cursor: pointer;
 }
 
 .st-copy-to-clipboard-btn:hover {
