@@ -103,7 +103,7 @@ def display_chat_messages(session, db):
 
         else:
             # Display the edit form
-            new_content = st.text_area("Edit Message", value=msg["content"], key=f"edit_text_{idx}", height=min(300, len(msg["content"]) // 2))
+            new_content = st.text_area("Edit Message", value=msg["content"], key=f"edit_text_{idx}", height=300)
             col1, col2 = st.columns([1, 1])
             with col1:
                 if st.button("Submit", key=f"submit_edit_{idx}"):
