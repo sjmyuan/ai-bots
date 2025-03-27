@@ -74,7 +74,6 @@ def display_chat_messages(session, db):
                     current_col -= 1
                     if st.button("📝", key=f"edit_{hash(msg['content'])}_{idx}"):
                         st.session_state.edit_message_idx = idx
-                        st.session_state.edit_message_content = msg["content"]
                         st.rerun()
 
             if idx == len(session["messages"]) - 1 and not st.session_state.get("generating_response", False):
@@ -104,7 +103,7 @@ def display_chat_messages(session, db):
 
         else:
             # Display the edit form
-            new_content = st.text_area("Edit Message", value=st.session_state.edit_message_content, key=f"edit_text_{idx}")
+            new_content = st.text_area("Edit Message", value=msg["content"], key=f"edit_text_{idx}", height=min(300, len(msg["content"]) // 2))
             col1, col2 = st.columns([1, 1])
             with col1:
                 if st.button("Submit", key=f"submit_edit_{idx}"):
@@ -127,7 +126,6 @@ def display_chat_messages(session, db):
             with col2:
                 if st.button("Cancel", key=f"cancel_edit_{idx}"):
                     st.session_state.edit_message_idx = None
-                    st.session_state.edit_message_content = ""
                     st.rerun()
 
 def handle_user_input(session, client, model, system_prompt_list, db):
