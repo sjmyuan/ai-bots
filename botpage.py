@@ -57,63 +57,36 @@ def display_chat_messages(session, db):
             """, unsafe_allow_html=True)
             continue
             
-        with st.chat_message(msg["role"]):
-            message_content = quote_content(msg["reasoning_content"]) + msg["content"]
-            st.markdown(message_content)
-            
-        # Use columns to position the buttons at the bottom right
-        # If this is the last message and not generating a response, add the truncate button
-        cols = st.columns([6, 1, 1, 1, 1])
-        if idx == len(session["messages"]) - 1 and not st.session_state.get("generating_response", False):
-            # Add retry button for the last assistant message
-            if msg["role"] == "assistant":
-                with cols[1]:
-                    if st.button("🔄", key="retry_button"):
-                        # Set flag to trigger regeneration
-                        st.session_state.retry_last_message = True
-                        # Remove the last assistant message
-                        session["messages"].pop()
+        if not (msg["role"] == "user" and st.session_state.get("edit_message_idx") == idx):
+            with st.chat_message(msg["role"]):
+                message_content = quote_content(msg["reasoning_content"]) + msg["content"]
+                st.markdown(message_content)
+                
+            # Use columns to position the buttons at the bottom right
+            # If this is the last message and not generating a response, add the truncate button
+            cols = st.columns([6, 1, 1, 1, 1])
+            if idx == len(session["messages"]) - 1 and not st.session_state.get("generating_response", False):
+                # Add retry button for the last assistant message
+                if msg["role"] == "assistant":
+                    with cols[1]:
+                        if st.button("🔄", key="retry_button"):
+                            # Set flag to trigger regeneration
+                            st.session_state.retry_last_message = True
+                            # Remove the last assistant message
+                            session["messages"].pop()
+                            save_session_to_db(db, session)
+                            st.rerun()
+                with cols[2]:
+                    if st.button("✂️", key="truncate_button"):
+                        # Insert truncation message
+                        session["messages"].append({
+                            "role": "truncation",
+                            "content": "",
+                            "reasoning_content": ""
+                        })
                         save_session_to_db(db, session)
-                        st.rerun()
-            with cols[2]:
-                if st.button("✂️", key="truncate_button"):
-                    # Insert truncation message
-                    session["messages"].append({
-                        "role": "truncation",
-                        "content": "",
-                        "reasoning_content": ""
-                    })
-                    save_session_to_db(db, session)
-                    st.rerun()  # Refresh the UI to show the truncation
-        if msg["role"] == "user":
-            if st.session_state.get("edit_message_idx") == idx:
-                # Display the edit form
-                new_content = st.text_area("Edit Message", value=st.session_state.edit_message_content, key=f"edit_text_{idx}")
-                col1, col2 = st.columns([1, 1])
-                with col1:
-                    if st.button("Submit", key=f"submit_edit_{idx}"):
-                        session["messages"][idx]["content"] = new_content
-                        st.session_state.edit_message_idx = None
-                        # Clear all messages after the edited message
-                        session["messages"] = session["messages"][:idx + 1]
-
-                        # Reset the generating response flag
-                        st.session_state.generating_response = False
-
-                        # Save the updated session to the database
-                        save_session_to_db(db, session)
-
-                        # Trigger regeneration of the assistant's response
-                        st.session_state.retry_last_message = True
-
-                        # Rerun the app to refresh the UI
-                        st.rerun()
-                with col2:
-                    if st.button("Cancel", key=f"cancel_edit_{idx}"):
-                        st.session_state.edit_message_idx = None
-                        st.session_state.edit_message_content = ""
-                        st.rerun()
-            else:
+                        st.rerun()  # Refresh the UI to show the truncation
+            if msg["role"] == "user":
                 with cols[3]:
                     if st.button("📝", key=f"edit_{hash(msg['content'])}_{idx}"):
                         st.session_state.edit_message_idx = idx
@@ -123,8 +96,32 @@ def display_chat_messages(session, db):
             with cols[4]:
                 st_copy_to_clipboard(msg["content"], key=f"copy_{hash(msg['content'])}_{idx}")
         else:
-            with cols[3]:
-                st_copy_to_clipboard(msg["content"], key=f"copy_{hash(msg['content'])}_{idx}")
+            # Display the edit form
+            new_content = st.text_area("Edit Message", value=st.session_state.edit_message_content, key=f"edit_text_{idx}")
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                if st.button("Submit", key=f"submit_edit_{idx}"):
+                    session["messages"][idx]["content"] = new_content
+                    st.session_state.edit_message_idx = None
+                    # Clear all messages after the edited message
+                    session["messages"] = session["messages"][:idx + 1]
+
+                    # Reset the generating response flag
+                    st.session_state.generating_response = False
+
+                    # Save the updated session to the database
+                    save_session_to_db(db, session)
+
+                    # Trigger regeneration of the assistant's response
+                    st.session_state.retry_last_message = True
+
+                    # Rerun the app to refresh the UI
+                    st.rerun()
+            with col2:
+                if st.button("Cancel", key=f"cancel_edit_{idx}"):
+                    st.session_state.edit_message_idx = None
+                    st.session_state.edit_message_content = ""
+                    st.rerun()
 
 def handle_user_input(session, client, model, system_prompt_list, db):
     """Handle user input and generate assistant response."""
