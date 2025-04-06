@@ -24,13 +24,13 @@ def save_session_to_db(db, session):
     db.sessions.update_one(
         {"id": session["id"]},
         {
-            "$set": {
-                "user": session["user"],
-                "name": session["name"],
-                "create_time": session.get("create_time", datetime.now()),
-                "bot_id": session["bot_id"],
-                "messages": session["messages"],
-            }
+                "$set": {
+                    "user": session["user"],
+                    "name": session["name"],
+                    "create_time": datetime.now(),  # Update timestamp on message changes
+                    "bot_id": session["bot_id"],
+                    "messages": session["messages"],
+                }
         },
         upsert=True,
     )
