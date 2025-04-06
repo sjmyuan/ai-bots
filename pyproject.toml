@@ -13,6 +13,7 @@ openai = "^1.50.2"
 dashscope = "^1.20.10"
 streamlit-authenticator = "^0.4.1"
 pymongo = "^4.11.2"
+trafilatura = "^1.8.0"
 
 
 [build-system]

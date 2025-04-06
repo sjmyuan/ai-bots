@@ -5,6 +5,9 @@ from st_copy_to_clipboard import st_copy_to_clipboard
 import streamlit as st
 import logging
 import os
+import trafilatura
+import json
+from typing import Optional
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -184,9 +187,28 @@ def handle_user_input(session, client, model, system_prompt_list, db):
                         for msg in session["messages"]
                     ]
                 
+                functions = [
+                    {
+                        "name": "fetch_url",
+                        "description": "Fetch and extract main content from a URL",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "url": {
+                                    "type": "string",
+                                    "description": "The URL to fetch content from"
+                                }
+                            },
+                            "required": ["url"]
+                        }
+                    }
+                ]
+                
                 stream = client.chat.completions.create(
                     model=model,
                     messages=system_prompt_list + messages_to_send,
+                    functions=functions,
+                    function_call="auto",
                     stream=True,
                 )
 
@@ -262,22 +284,58 @@ def botpage(db):
     # Handle user input
     handle_user_input(session, client, model["model"], [system_prompt] if system_prompt["content"].strip() != "" else [], db)
 
+def fetch_url(url: str) -> Optional[str]:
+    """Fetch and extract main content from a URL using trafilatura."""
+    try:
+        downloaded = trafilatura.fetch_url(url)
+        if downloaded:
+            return trafilatura.extract(downloaded)
+        return None
+    except Exception as e:
+        logger.error(f"Failed to fetch URL {url}: {e}")
+        return None
+
+def handle_function_call(function_name: str, arguments: dict) -> dict:
+    """Handle function calls from the AI client."""
+    if function_name == "fetch_url":
+        url = arguments.get("url")
+        if not url:
+            return {"error": "URL parameter missing"}
+        content = fetch_url(url)
+        return {"content": content if content else "Failed to fetch URL content"}
+    return {"error": f"Unknown function: {function_name}"}
+
 # Function to handle the streaming of chat responses
 def write_stream(stream):
     response = ""
     reasoning_response = ""
     container = None
+    function_call = None
+    function_name = ""
+    function_args = ""
+    
     for chunk in stream:
         message = ""
         reasoning_message = ""
+        
         if len(chunk.choices) == 0 or chunk.choices[0].delta is None:
-            # The choices list can be empty, e.g., when using the AzureOpenAI client, the first chunk will always be empty.
-            message = ""
-        else:
-            if hasattr(chunk.choices[0].delta, "reasoning_content") and chunk.choices[0].delta.reasoning_content:
-                reasoning_message += chunk.choices[0].delta.reasoning_content
-            else:
-                message += chunk.choices[0].delta.content or ""
+            continue
+            
+        delta = chunk.choices[0].delta
+        
+        # Handle function call
+        if hasattr(delta, "function_call"):
+            if delta.function_call.name:
+                function_name = delta.function_call.name
+            if delta.function_call.arguments:
+                function_args += delta.function_call.arguments
+            continue
+                
+        # Handle normal content
+        if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+            reasoning_message += delta.reasoning_content
+        elif delta.content:
+            message += delta.content
 
         # Continue if there is no content and reasoning content
         if not message and not reasoning_message:
@@ -294,8 +352,19 @@ def write_stream(stream):
         # Only add the streaming symbol on the second text chunk
         container.markdown(quote_content(reasoning_response) + response + ("" if first_text else " | "))
 
+    # Handle function call if one was made
+    if function_name:
+        try:
+            args = json.loads(function_args) if function_args else {}
+            function_result = handle_function_call(function_name, args)
+            response += f"\n\nFunction result: {function_result['content'] if 'content' in function_result else function_result['error']}"
+        except Exception as e:
+            logger.error(f"Failed to handle function call {function_name}: {e}")
+            response += f"\n\nError executing function {function_name}: {str(e)}"
+
     # Flush the stream
     if container:
         container.markdown(quote_content(reasoning_response) + response)
         container = None
+        
     return response, reasoning_response
