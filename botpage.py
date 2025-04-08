@@ -70,6 +70,7 @@ def initialize_openai_client(api_key, base_url):
         st.error("Failed to initialize OpenAI client. Please check the API key and base URL.")
         st.stop()
 
+# TODO: handle tool calls
 def display_chat_messages(session, db):
     """Display chat messages."""
     for idx, msg in enumerate(session["messages"]):
