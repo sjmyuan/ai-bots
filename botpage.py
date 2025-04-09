@@ -5,14 +5,43 @@ from st_copy_to_clipboard import st_copy_to_clipboard
 import streamlit as st
 import logging
 import os
+import trafilatura
+import json
+from typing import Optional, List, Dict, Any, Tuple
+
+# Define tools as a constant
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_url",
+            "description": "Fetch and extract main content from a URL",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL to fetch content from"
+                    }
+                },
+                "required": ["url"],
+                "additionalProperties": False
+            },
+            "strict": True
+        }
+    }
+]
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Function to format content with a quote
+# --- Utility Functions ---
+
 def quote_content(content: str) -> str:
     """Format content with a quote."""
+    if not content:
+        return ""
     lines = content.splitlines()
     modified_lines = ["> " + line for line in lines]
     return "\n".join(modified_lines)
@@ -24,13 +53,13 @@ def save_session_to_db(db, session):
     db.sessions.update_one(
         {"id": session["id"]},
         {
-                "$set": {
-                    "user": session["user"],
-                    "name": session["name"],
-                    "create_time": datetime.now(),  # Update timestamp on message changes
-                    "bot_id": session["bot_id"],
-                    "messages": session["messages"],
-                }
+            "$set": {
+                "user": session["user"],
+                "name": session["name"],
+                "create_time": datetime.now(),  # Update timestamp on message changes
+                "bot_id": session["bot_id"],
+                "messages": session["messages"],
+            }
         },
         upsert=True,
     )
@@ -44,91 +73,251 @@ def initialize_openai_client(api_key, base_url):
         st.error("Failed to initialize OpenAI client. Please check the API key and base URL.")
         st.stop()
 
-def display_chat_messages(session, db):
-    """Display chat messages."""
+def fetch_url(url: str) -> Optional[str]:
+    """Fetch and extract main content from a URL using trafilatura."""
+    try:
+        downloaded = trafilatura.fetch_url(url)
+        if downloaded:
+            return trafilatura.extract(downloaded)
+        return None
+    except Exception as e:
+        logger.error(f"Failed to fetch URL {url}: {e}")
+        return None
+
+def handle_function_call(function_name: str, arguments: dict) -> dict:
+    """Handle function calls from the AI client."""
+    if function_name == "fetch_url":
+        url = arguments.get("url")
+        if not url:
+            return {"error": "URL parameter missing"}
+        content = fetch_url(url)
+        return {"content": content if content else "Failed to fetch URL content"}
+    return {"error": f"Unknown function: {function_name}"}
+
+# --- Message Display and Handling Functions ---
+
+def display_truncation_message():
+    """Display a truncation message in the chat."""
+    st.markdown("""
+        <div style='position: relative; text-align: center; margin: 20px 0; height: 20px;'>
+            <hr style='position: absolute; width: 100%; top: 10px; border: none; border-top: 1px solid #ccc; margin: 0;'>
+            <span style='position: absolute; top: 0; left: 50%; transform: translateX(-50%); background-color: #f0f2f6; padding: 0 10px; color: #888; font-size: 0.8rem;'>truncated</span>
+        </div>
+    """, unsafe_allow_html=True)
+
+def display_message_content(msg: Dict[str, Any]):
+    """Display the content of a message."""
+    if msg["role"] == "tool":
+        with st.expander("Click to Expand/Collapse Tool Call Response", expanded=False):
+            st.text(msg["content"])
+    else:
+        message_content = quote_content(msg.get("reasoning_content", "")) + msg["content"]
+
+        if "tool_calls" in msg and msg["tool_calls"]:
+            message_content += "\n\n**Tool Calls:**\n"
+            for tool_call in msg["tool_calls"]:
+                message_content += f"- **{tool_call['function']['name']}**: {tool_call['function']['arguments']}\n"
+        st.markdown(message_content)
+
+def display_message_actions(msg: Dict[str, Any], idx: int, session: Dict[str, Any], db, is_last_message: bool):
+    """Display action buttons for a message."""
+    cols = st.columns([6, 1, 1, 1, 1])
+    current_col = 4
+
+    # Copy button
+    with cols[current_col]:
+        current_col -= 1
+        st_copy_to_clipboard(msg["content"], key=f"copy_{hash(msg['content'])}_{idx}")
+
+    # Edit button for user messages
+    if msg["role"] == "user":
+        with cols[current_col]:
+            current_col -= 1
+            if st.button("📝", key=f"edit_{hash(msg['content'])}_{idx}"):
+                st.session_state.edit_message_idx = idx
+                st.rerun()
+
+    # Additional buttons for the last message
+    if is_last_message and not st.session_state.get("generating_response", False):
+        # Truncate button
+        with cols[current_col]:
+            current_col -= 1
+            if st.button("✂️", key="truncate_button"):
+                session["messages"].append({
+                    "role": "truncation",
+                    "content": "",
+                    "reasoning_content": ""
+                })
+                save_session_to_db(db, session)
+                st.rerun()
+
+        # Retry button for assistant messages
+        if msg["role"] == "assistant":
+            with cols[current_col]:
+                if st.button("🔄", key="retry_button"):
+                    st.session_state.retry_last_message = True
+                    session["messages"].pop()
+                    save_session_to_db(db, session)
+                    st.rerun()
+
+def display_edit_form(msg: Dict[str, Any], idx: int, session: Dict[str, Any], db):
+    """Display the form for editing a message."""
+    new_content = st.text_area("Edit Message", value=msg["content"], key=f"edit_text_{idx}", height=300)
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        if st.button("Submit", key=f"submit_edit_{idx}"):
+            session["messages"][idx]["content"] = new_content
+            st.session_state.edit_message_idx = None
+            # Clear all messages after the edited message
+            session["messages"] = session["messages"][:idx + 1]
+
+            # Reset the generating response flag
+            st.session_state.generating_response = False
+
+            # Save the updated session to the database
+            save_session_to_db(db, session)
+
+            # Trigger regeneration of the assistant's response
+            st.session_state.retry_last_message = True
+
+            # Rerun the app to refresh the UI
+            st.rerun()
+    with col2:
+        if st.button("Cancel", key=f"cancel_edit_{idx}"):
+            st.session_state.edit_message_idx = None
+            st.rerun()
+
+def display_chat_messages(session: Dict[str, Any], db):
+    """Display all chat messages."""
     for idx, msg in enumerate(session["messages"]):
         if msg["role"] == "truncation":
-            # Display truncation message as a line crossing directly through the text
-            st.markdown("""
-                <div style='position: relative; text-align: center; margin: 20px 0; height: 20px;'>
-                    <hr style='position: absolute; width: 100%; top: 10px; border: none; border-top: 1px solid #ccc; margin: 0;'>
-                    <span style='position: absolute; top: 0; left: 50%; transform: translateX(-50%); background-color: #f0f2f6; padding: 0 10px; color: #888; font-size: 0.8rem;'>truncated</span>
-                </div>
-            """, unsafe_allow_html=True)
+            display_truncation_message()
             continue
             
         if not (msg["role"] == "user" and st.session_state.get("edit_message_idx") == idx):
             with st.chat_message(msg["role"]):
-                message_content = quote_content(msg["reasoning_content"]) + msg["content"]
-                st.markdown(message_content)
-                
-            cols = st.columns([6, 1, 1, 1, 1])
-            current_col =4
-
-            with cols[current_col]:
-                current_col -= 1
-                st_copy_to_clipboard(msg["content"], key=f"copy_{hash(msg['content'])}_{idx}")
-
-            if msg["role"] == "user":
-                with cols[current_col]:
-                    current_col -= 1
-                    if st.button("📝", key=f"edit_{hash(msg['content'])}_{idx}"):
-                        st.session_state.edit_message_idx = idx
-                        st.rerun()
-
-            if idx == len(session["messages"]) - 1 and not st.session_state.get("generating_response", False):
-
-                with cols[current_col]:
-                    current_col -= 1
-                    if st.button("✂️", key="truncate_button"):
-                        # Insert truncation message
-                        session["messages"].append({
-                            "role": "truncation",
-                            "content": "",
-                            "reasoning_content": ""
-                        })
-                        save_session_to_db(db, session)
-                        st.rerun()  # Refresh the UI to show the truncation
-
-                # Add retry button for the last assistant message
-                if msg["role"] == "assistant":
-                    with cols[current_col]:
-                        if st.button("🔄", key="retry_button"):
-                            # Set flag to trigger regeneration
-                            st.session_state.retry_last_message = True
-                            # Remove the last assistant message
-                            session["messages"].pop()
-                            save_session_to_db(db, session)
-                            st.rerun()
-
+                display_message_content(msg)
+            
+            display_message_actions(
+                msg, 
+                idx, 
+                session, 
+                db, 
+                is_last_message=(idx == len(session["messages"]) - 1)
+            )
         else:
-            # Display the edit form
-            new_content = st.text_area("Edit Message", value=msg["content"], key=f"edit_text_{idx}", height=300)
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                if st.button("Submit", key=f"submit_edit_{idx}"):
-                    session["messages"][idx]["content"] = new_content
-                    st.session_state.edit_message_idx = None
-                    # Clear all messages after the edited message
-                    session["messages"] = session["messages"][:idx + 1]
+            display_edit_form(msg, idx, session, db)
 
-                    # Reset the generating response flag
-                    st.session_state.generating_response = False
+# --- Stream Handling Functions ---
 
-                    # Save the updated session to the database
-                    save_session_to_db(db, session)
+def write_stream(stream) -> Tuple[str, str, List[Dict]]:
+    """
+    Handle the streaming of chat responses including tool calls.
+    Returns the response, reasoning response, and function call data if any.
+    """
+    response = ""
+    reasoning_response = ""
+    container = None
+    final_tool_calls = {}
+    
+    for chunk in stream:
+        message = ""
+        reasoning_message = ""
+        
+        if len(chunk.choices) == 0 or chunk.choices[0].delta is None:
+            continue
+            
+        delta = chunk.choices[0].delta
+        
+        # Handle tool calls
+        if hasattr(delta, "tool_calls") and delta.tool_calls:
+            for tool_call in delta.tool_calls:
+                index = tool_call.index
+                
+                if index not in final_tool_calls:
+                    final_tool_calls[index] = {
+                        "id": tool_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments,
+                        }
+                    }
+                else:
+                    if tool_call.function.arguments:
+                        final_tool_calls[index]["function"]["arguments"] += tool_call.function.arguments
+                
+        # Handle normal content
+        if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+            reasoning_message += delta.reasoning_content
+        elif delta.content:
+            message += delta.content
 
-                    # Trigger regeneration of the assistant's response
-                    st.session_state.retry_last_message = True
+        # Continue if there is no content and reasoning content
+        if not message and not reasoning_message and not final_tool_calls:
+            continue
 
-                    # Rerun the app to refresh the UI
-                    st.rerun()
-            with col2:
-                if st.button("Cancel", key=f"cancel_edit_{idx}"):
-                    st.session_state.edit_message_idx = None
-                    st.rerun()
+        first_text = False
+        if not container:
+            container = st.empty()
+            first_text = True
 
-def handle_user_input(session, client, model, system_prompt_list, db):
+        response += message
+        reasoning_response += reasoning_message
+
+        if final_tool_calls:
+            tool_calls_content = render_tool_calls(final_tool_calls)
+            container.markdown(tool_calls_content)
+        else:
+            # Only add the streaming symbol on the second text chunk
+            container.markdown(quote_content(reasoning_response) + response + ("" if first_text else " | "))
+
+    # Flush the stream
+    if container:
+        if final_tool_calls:
+            tool_calls_content = render_tool_calls(final_tool_calls)
+            container.markdown(tool_calls_content)
+        else:
+            container.markdown(quote_content(reasoning_response) + response)
+        
+    return response, reasoning_response, list(final_tool_calls.values())
+
+def render_tool_calls(tool_calls: Dict) -> str:
+    """Render tool calls as markdown."""
+    tool_calls_content = "\n\n**Tool Calls:**\n"
+    for tool_call in tool_calls.values():
+        tool_calls_content += f"- **{tool_call['function']['name']}**: {tool_call['function']['arguments']}\n"
+    return tool_calls_content
+
+def prepare_messages_for_api(session: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Prepare messages for the API call, handling truncation properly."""
+    messages_to_send = []
+    found_truncation = False
+
+    # Scan messages from newest to oldest
+    for msg in reversed(session["messages"]):
+        if msg["role"] == "truncation":
+            found_truncation = True
+            break
+        message_to_add = {
+            "role": msg["role"],
+            "content": msg['content']
+        }
+        if 'tool_calls' in msg:
+            message_to_add["tool_calls"] = msg['tool_calls']
+        messages_to_send.insert(0, message_to_add)
+
+    # If truncation was found, modify the first user message
+    if found_truncation and messages_to_send:
+        first_user_idx = next((i for i, msg in enumerate(messages_to_send) if msg["role"] == "user"), None)
+        if first_user_idx is not None:
+            messages_to_send[first_user_idx]["content"] = f"<user_input>{messages_to_send[first_user_idx]['content']}</user_input>"
+
+    return messages_to_send
+
+# --- Main Chat Handling Functions ---
+
+def handle_user_input(session: Dict[str, Any], client, model: Dict[str, Any], system_prompt_list: List[Dict[str, str]], db):
     """Handle user input and generate assistant response."""
     # Check if we need to retry the last message
     retry_mode = False
@@ -150,66 +339,62 @@ def handle_user_input(session, client, model, system_prompt_list, db):
             with cols[2]:
                 st_copy_to_clipboard(prompt, key=f"copy_{hash(prompt)}_input_latest")
 
-
-        # Create the chat completion stream
         try:
-            with st.chat_message("assistant"):
-                # Set flag to indicate response is being generated
-                st.session_state.generating_response = True
-                
-                # Get messages after the last truncation efficiently (reverse search)
-                messages_to_send = []
-                found_truncation = False
-                
-                # Scan messages from newest to oldest
-                for msg in reversed(session["messages"]):
-                    if msg["role"] == "truncation":
-                        found_truncation = True
-                        break
-                    messages_to_send.insert(0, {
-                        "role": msg["role"],
-                        "content": msg['content']
-                    })
-                
-                # If truncation was found, modify the first user message
-                if found_truncation and messages_to_send:
-                    first_user_idx = next((i for i, msg in enumerate(messages_to_send) if msg["role"] == "user"), None)
-                    if first_user_idx is not None:
-                        messages_to_send[first_user_idx]["content"] = f"<user_input>{messages_to_send[first_user_idx]['content']}</user_input>"
-                
-                # If no truncation found, use all messages
-                if not found_truncation:
-                    messages_to_send = [
-                        {"role": msg["role"], "content": msg["content"]}
-                        for msg in session["messages"]
-                    ]
-                
+            # Set flag to indicate response is being generated
+            st.session_state.generating_response = True
+            
+            # Start a do-while loop to handle tool calls
+            while True:
+                # Get messages after the last truncation efficiently
+                messages_to_send = prepare_messages_for_api(session)
+
+                # Create the chat completion stream
                 stream = client.chat.completions.create(
                     model=model,
                     messages=system_prompt_list + messages_to_send,
+                    tools=TOOLS,
+                    function_call="auto",
                     stream=True,
                 )
 
-                # Write the stream to the chat
-                response, reasoning_response = write_stream(stream)
-                
-                # Reset the generating response flag
-                st.session_state.generating_response = False
-                
+                with st.chat_message("assistant"):
+                    # Write the stream to the chat
+                    response, reasoning_response, tool_calls = write_stream(stream)
+
+                session["messages"].append({
+                    "role": "assistant",
+                    "content": response,
+                    "reasoning_content": reasoning_response,
+                    **({"tool_calls": tool_calls} if tool_calls else {})
+                })
+
+                if not tool_calls:
+                    break  # Exit the loop if there are no tool calls
+
+                # Handle tool calls
+                for tool_call in tool_calls:
+                    if "function" in tool_call and tool_call["function"]:
+                        arguments = json.loads(tool_call["function"]["arguments"]) if tool_call["function"]["arguments"] else {}
+                        function_response = handle_function_call(tool_call["function"]["name"], arguments)
+                        session["messages"].append({
+                            "role": "tool",
+                            "tool_call_id": tool_call["id"],
+                            "content": function_response.get("content", "Failed to fetch URL content"),
+                            "reasoning_content": "",
+                        })
+                        with st.chat_message("tool"):
+                            with st.expander("Click to Expand/Collapse Tool Call Response", expanded=False):
+                                st.text(function_response.get("content", "Failed to fetch URL content"))
+
+            # Reset the generating response flag
+            st.session_state.generating_response = False
                 
         except Exception as e:
             # Reset the generating response flag in case of error
             st.session_state.generating_response = False
-            logger.error(f"Failed to create chat completion: {e}")
+            logger.error(f"Failed to create chat completion: {e}", exc_info=True)
             st.error("Failed to create chat completion. Please check the model and messages.")
             st.stop()
-
-        # Append the assistant message to the session
-        session["messages"].append({
-            "role": "assistant",
-            "content": response,
-            "reasoning_content": reasoning_response,
-        })
 
         # Set the session name if it is not already set
         if not session["name"]:
@@ -217,11 +402,10 @@ def handle_user_input(session, client, model, system_prompt_list, db):
             st.session_state.bot_sessions.append(session)
 
         save_session_to_db(db, session)
+        st.rerun()  # Refresh the UI
 
-        st.rerun()  # Refresh the UI to show the truncation
-
-# Main function to handle the bot page
 def botpage(db):
+    """Main function to handle the bot page."""
     # Get the current session and model
     session = st.session_state.current_session
     model = st.session_state.current_model
@@ -244,6 +428,7 @@ def botpage(db):
 
     # Define the system prompt
     system_prompt = {"role": "system", "content": bot["prompt"]}
+    system_prompt_list = [system_prompt] if system_prompt["content"].strip() != "" else []
 
     # Initialize the OpenAI client
     client = initialize_openai_client(model["api_key"], model["base_url"])
@@ -260,42 +445,4 @@ def botpage(db):
     display_chat_messages(session, db)
 
     # Handle user input
-    handle_user_input(session, client, model["model"], [system_prompt] if system_prompt["content"].strip() != "" else [], db)
-
-# Function to handle the streaming of chat responses
-def write_stream(stream):
-    response = ""
-    reasoning_response = ""
-    container = None
-    for chunk in stream:
-        message = ""
-        reasoning_message = ""
-        if len(chunk.choices) == 0 or chunk.choices[0].delta is None:
-            # The choices list can be empty, e.g., when using the AzureOpenAI client, the first chunk will always be empty.
-            message = ""
-        else:
-            if hasattr(chunk.choices[0].delta, "reasoning_content") and chunk.choices[0].delta.reasoning_content:
-                reasoning_message += chunk.choices[0].delta.reasoning_content
-            else:
-                message += chunk.choices[0].delta.content or ""
-
-        # Continue if there is no content and reasoning content
-        if not message and not reasoning_message:
-            continue
-
-        first_text = False
-        if not container:
-            container = st.empty()
-            first_text = True
-
-        response += message
-        reasoning_response += reasoning_message
-
-        # Only add the streaming symbol on the second text chunk
-        container.markdown(quote_content(reasoning_response) + response + ("" if first_text else " | "))
-
-    # Flush the stream
-    if container:
-        container.markdown(quote_content(reasoning_response) + response)
-        container = None
-    return response, reasoning_response
+    handle_user_input(session, client, model["model"], system_prompt_list, db)
