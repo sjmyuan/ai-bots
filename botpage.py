@@ -379,12 +379,12 @@ def handle_user_input(session: Dict[str, Any], client, model: Dict[str, Any], sy
                         session["messages"].append({
                             "role": "tool",
                             "tool_call_id": tool_call["id"],
-                            "content": function_response.get("content", ""),
+                            "content": function_response.get("content", "Failed to fetch URL content"),
                             "reasoning_content": "",
                         })
                         with st.chat_message("tool"):
                             with st.expander("Click to Expand/Collapse Tool Call Response", expanded=False):
-                                st.text(function_response.get("content", ""))
+                                st.text(function_response.get("content", "Failed to fetch URL content"))
 
             # Reset the generating response flag
             st.session_state.generating_response = False
