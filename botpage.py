@@ -86,8 +86,17 @@ def display_chat_messages(session, db):
             
         if not (msg["role"] == "user" and st.session_state.get("edit_message_idx") == idx):
             with st.chat_message(msg["role"]):
-                message_content = quote_content(msg["reasoning_content"]) + msg["content"]
-                st.markdown(message_content)
+                if(msg["role"] == "tool"):
+                    with st.expander("Click to Expand/Collapse Tool Call Response", expanded=False):
+                        st.write(msg["content"])
+                else:
+                    message_content = quote_content(msg["reasoning_content"]) + msg["content"]
+
+                    if "tool_calls" in msg and msg["tool_calls"]:
+                        message_content += "\n\n**Tool Calls:**\n"
+                        for tool_call in msg["tool_calls"]:
+                            message_content += f"- **{tool_call['function']['name']}**: {tool_call['function']['arguments']}\n"
+                    st.markdown(message_content)
                 
             cols = st.columns([6, 1, 1, 1, 1])
             current_col =4
@@ -180,72 +189,75 @@ def handle_user_input(session, client, model, system_prompt_list, db):
 
         # Create the chat completion stream
         try:
-            with st.chat_message("assistant"):
-                # Set flag to indicate response is being generated
-                st.session_state.generating_response = True
-                
-                # Start a do-while loop
-                while True:
-                    # Get messages after the last truncation efficiently (reverse search)
-                    messages_to_send = []
-                    found_truncation = False
+            # Set flag to indicate response is being generated
+            st.session_state.generating_response = True
+            
+            # Start a do-while loop
+            while True:
+                # Get messages after the last truncation efficiently (reverse search)
+                messages_to_send = []
+                found_truncation = False
 
-                    # Scan messages from newest to oldest
-                    for msg in reversed(session["messages"]):
-                        if msg["role"] == "truncation":
-                            found_truncation = True
-                            break
-                        message_to_add = {
-                            "role": msg["role"],
-                            "content": msg['content']
-                        }
-                        if 'tool_calls' in msg:
-                            message_to_add["tool_calls"] = msg['tool_calls']
-                        messages_to_send.insert(0, message_to_add)
+                # Scan messages from newest to oldest
+                for msg in reversed(session["messages"]):
+                    if msg["role"] == "truncation":
+                        found_truncation = True
+                        break
+                    message_to_add = {
+                        "role": msg["role"],
+                        "content": msg['content']
+                    }
+                    if 'tool_calls' in msg:
+                        message_to_add["tool_calls"] = msg['tool_calls']
+                    messages_to_send.insert(0, message_to_add)
 
-                    # If truncation was found, modify the first user message
-                    if found_truncation and messages_to_send:
-                        first_user_idx = next((i for i, msg in enumerate(messages_to_send) if msg["role"] == "user"), None)
-                        if first_user_idx is not None:
-                            messages_to_send[first_user_idx]["content"] = f"<user_input>{messages_to_send[first_user_idx]['content']}</user_input>"
+                # If truncation was found, modify the first user message
+                if found_truncation and messages_to_send:
+                    first_user_idx = next((i for i, msg in enumerate(messages_to_send) if msg["role"] == "user"), None)
+                    if first_user_idx is not None:
+                        messages_to_send[first_user_idx]["content"] = f"<user_input>{messages_to_send[first_user_idx]['content']}</user_input>"
 
-                    print(messages_to_send)
+                print(messages_to_send)
 
-                    stream = client.chat.completions.create(
-                        model=model,
-                        messages=system_prompt_list + messages_to_send,
-                        tools=TOOLS,
-                        function_call="auto",
-                        stream=True,
-                    )
+                stream = client.chat.completions.create(
+                    model=model,
+                    messages=system_prompt_list + messages_to_send,
+                    tools=TOOLS,
+                    function_call="auto",
+                    stream=True,
+                )
 
+                with st.chat_message("assistant"):
                     # Write the stream to the chat
                     response, reasoning_response, tool_calls = write_stream(stream)
 
-                    session["messages"].append({
-                        "role": "assistant",
-                        "content": response,
-                        "reasoning_content": reasoning_response,
-                        **({"tool_calls": tool_calls} if tool_calls else {})
-                    })
+                session["messages"].append({
+                    "role": "assistant",
+                    "content": response,
+                    "reasoning_content": reasoning_response,
+                    **({"tool_calls": tool_calls} if tool_calls else {})
+                })
 
-                    if not tool_calls:
-                        break  # Exit the loop if there are no tool calls
+                if not tool_calls:
+                    break  # Exit the loop if there are no tool calls
 
-                    # Handle tool calls
-                    for tool_call in tool_calls:
-                        if "function" in tool_call and tool_call["function"]:
-                            arguments = json.loads(tool_call["function"]["arguments"]) if tool_call["function"]["arguments"] else {}
-                            function_response = handle_function_call(tool_call["function"]["name"], arguments)
-                            session["messages"].append({
-                                "role": "tool",
-                                "tool_call_id": tool_call["id"],
-                                "content": function_response.get("content", ""),
-                                "reasoning_content": "",
-                            })
-                            st.markdown(f"Tool call response: \n {function_response.get('content', '')}")
-                # Reset the generating response flag
-                st.session_state.generating_response = False
+                # Handle tool calls
+                for tool_call in tool_calls:
+                    if "function" in tool_call and tool_call["function"]:
+                        arguments = json.loads(tool_call["function"]["arguments"]) if tool_call["function"]["arguments"] else {}
+                        function_response = handle_function_call(tool_call["function"]["name"], arguments)
+                        session["messages"].append({
+                            "role": "tool",
+                            "tool_call_id": tool_call["id"],
+                            "content": function_response.get("content", ""),
+                            "reasoning_content": "",
+                        })
+                        with st.chat_message("tool"):
+                            with st.expander("Click to Expand/Collapse Tool Call Response", expanded=False):
+                                st.write(function_response.get("content", ""))
+
+            # Reset the generating response flag
+            st.session_state.generating_response = False
                 
                 
         except Exception as e:
@@ -385,16 +397,22 @@ def write_stream(stream):
         response += message
         reasoning_response += reasoning_message
 
-        if not final_tool_calls:
-            container.markdown("Calling functions...")
+        if final_tool_calls:
+            tool_calls_content = "\n\n**Tool Calls:**\n"
+            for final_tool_call in final_tool_calls.values():
+                tool_calls_content += f"- **{final_tool_call['function']['name']}**: {final_tool_call['function']['arguments']}\n"
+            container.markdown(tool_calls_content)
         else:
         # Only add the streaming symbol on the second text chunk
             container.markdown(quote_content(reasoning_response) + response + ("" if first_text else " | "))
 
     # Flush the stream
     if container:
-        if not final_tool_calls:
-            container.markdown("Calling functions...")
+        if final_tool_calls:
+            tool_calls_content = "\n\n**Tool Calls:**\n"
+            for final_tool_call in final_tool_calls.values():
+                tool_calls_content += f"- **{final_tool_call['function']['name']}**: {final_tool_call['function']['arguments']}\n"
+            container.markdown(tool_calls_content)
         else:
             container.markdown(quote_content(reasoning_response) + response)
         container = None
