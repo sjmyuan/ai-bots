@@ -70,7 +70,6 @@ def initialize_openai_client(api_key, base_url):
         st.error("Failed to initialize OpenAI client. Please check the API key and base URL.")
         st.stop()
 
-# TODO: handle tool calls
 def display_chat_messages(session, db):
     """Display chat messages."""
     for idx, msg in enumerate(session["messages"]):
@@ -88,7 +87,7 @@ def display_chat_messages(session, db):
             with st.chat_message(msg["role"]):
                 if(msg["role"] == "tool"):
                     with st.expander("Click to Expand/Collapse Tool Call Response", expanded=False):
-                        st.write(msg["content"])
+                        st.text(msg["content"])
                 else:
                     message_content = quote_content(msg["reasoning_content"]) + msg["content"]
 
@@ -254,7 +253,7 @@ def handle_user_input(session, client, model, system_prompt_list, db):
                         })
                         with st.chat_message("tool"):
                             with st.expander("Click to Expand/Collapse Tool Call Response", expanded=False):
-                                st.write(function_response.get("content", ""))
+                                st.text(function_response.get("content", ""))
 
             # Reset the generating response flag
             st.session_state.generating_response = False
