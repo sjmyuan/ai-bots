@@ -303,8 +303,13 @@ def prepare_messages_for_api(session: Dict[str, Any]) -> List[Dict[str, Any]]:
             "role": msg["role"],
             "content": msg['content']
         }
+
         if 'tool_calls' in msg:
             message_to_add["tool_calls"] = msg['tool_calls']
+
+        if 'tool_call_id' in msg:
+            message_to_add["tool_call_id"] = msg['tool_call_id']
+
         messages_to_send.insert(0, message_to_add)
 
     # If truncation was found, modify the first user message
@@ -317,7 +322,7 @@ def prepare_messages_for_api(session: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 # --- Main Chat Handling Functions ---
 
-def handle_user_input(session: Dict[str, Any], client, model: Dict[str, Any], system_prompt_list: List[Dict[str, str]], db):
+def handle_user_input(session: Dict[str, Any], client, model: str, system_prompt_list: List[Dict[str, str]], db):
     """Handle user input and generate assistant response."""
     # Check if we need to retry the last message
     retry_mode = False
@@ -352,7 +357,7 @@ def handle_user_input(session: Dict[str, Any], client, model: Dict[str, Any], sy
                 stream = client.chat.completions.create(
                     model=model,
                     messages=system_prompt_list + messages_to_send,
-                    tools=TOOLS,
+                    tools=TOOLS if model != "deepseek-reasoner" and model != "deepseek-r1" else None,
                     function_call="auto",
                     stream=True,
                 )
