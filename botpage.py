@@ -121,7 +121,7 @@ def display_message_content(msg: Dict[str, Any]):
         with st.expander("Click to Expand/Collapse Tool Call Response", expanded=False):
             st.text(msg["content"])
     else:
-        message_content = quote_content(msg.get("reasoning_content", "")) + msg["content"]
+        message_content = quote_content(msg.get("reasoning_content", "")) + "\n\n" + msg["content"]
 
         if "tool_calls" in msg and msg["tool_calls"]:
             message_content += "\n\n**Tool Calls:**\n"
@@ -280,7 +280,12 @@ def write_stream(stream) -> Tuple[str, str, List[Dict]]:
             container.markdown(tool_calls_content)
         else:
             # Only add the streaming symbol on the second text chunk
-            container.markdown(quote_content(reasoning_response) + response + ("" if first_text else " | "))
+            content_to_display = quote_content(reasoning_response)
+            if response:
+                content_to_display += "\n\n" + response
+            if not first_text:
+                content_to_display += " | "
+            container.markdown(content_to_display)
 
     # Flush the stream
     if container:
@@ -288,7 +293,7 @@ def write_stream(stream) -> Tuple[str, str, List[Dict]]:
             tool_calls_content = render_tool_calls(final_tool_calls)
             container.markdown(tool_calls_content)
         else:
-            container.markdown(quote_content(reasoning_response) + response)
+            container.markdown(quote_content(reasoning_response) + "\n\n" + response)
         
     return response, reasoning_response, list(final_tool_calls.values())
 
