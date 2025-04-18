@@ -1,11 +1,13 @@
 # Import necessary libraries
+from bs4 import BeautifulSoup
 from openai import OpenAI
 from datetime import datetime
+
+import requests
+import markdownify
 from st_copy_to_clipboard import st_copy_to_clipboard
 import streamlit as st
 import logging
-import os
-import trafilatura
 import json
 from typing import Optional, List, Dict, Any, Tuple
 
@@ -76,23 +78,31 @@ def initialize_openai_client(api_key, base_url):
 def fetch_url(url: str) -> Optional[str]:
     """Fetch and extract main content from a URL using trafilatura."""
     try:
-        downloaded = trafilatura.fetch_url(url)
-        if downloaded:
-            return trafilatura.extract(downloaded)
-        return None
+        response = requests.get(url)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, 'html.parser', from_encoding=response.encoding)
+        body = soup.find('body')
+        return markdownify.markdownify(str(body) if body else "", heading_style="ATX")
     except Exception as e:
         logger.error(f"Failed to fetch URL {url}: {e}")
         return None
 
 def handle_function_call(function_name: str, arguments: dict) -> dict:
     """Handle function calls from the AI client."""
-    if function_name == "fetch_url":
-        url = arguments.get("url")
-        if not url:
-            return {"error": "URL parameter missing"}
-        content = fetch_url(url)
-        return {"content": content if content else "Failed to fetch URL content"}
-    return {"error": f"Unknown function: {function_name}"}
+    try:
+        if function_name == "fetch_url":
+            url = arguments.get("url")
+            if not url:
+                return {"error": "URL parameter missing"}
+            content = fetch_url(url)
+            if content:
+                return {"content": content}
+            else:   
+                return {"error": f"Failed to fetch content from URL: {url}"}
+        return {"error": f"Unknown function: {function_name}"}
+    except Exception as e:
+        logger.error(f"Error in function call {function_name}: {e}")
+        return {"error": f"Function call failed: {e}"}
 
 # --- Message Display and Handling Functions ---
 
@@ -381,15 +391,17 @@ def handle_user_input(session: Dict[str, Any], client, model: str, system_prompt
                     if "function" in tool_call and tool_call["function"]:
                         arguments = json.loads(tool_call["function"]["arguments"]) if tool_call["function"]["arguments"] else {}
                         function_response = handle_function_call(tool_call["function"]["name"], arguments)
+                        tool_response_content = function_response.get("content", function_response.get("error", "Invalid function response"))
                         session["messages"].append({
                             "role": "tool",
                             "tool_call_id": tool_call["id"],
-                            "content": function_response.get("content", "Failed to fetch URL content"),
+                            "content": tool_response_content,
                             "reasoning_content": "",
                         })
                         with st.chat_message("tool"):
                             with st.expander("Click to Expand/Collapse Tool Call Response", expanded=False):
-                                st.text(function_response.get("content", "Failed to fetch URL content"))
+                                st.text(tool_response_content)
+
 
             # Reset the generating response flag
             st.session_state.generating_response = False
