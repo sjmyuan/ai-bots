@@ -2,6 +2,8 @@
 from bs4 import BeautifulSoup
 from openai import OpenAI
 from datetime import datetime
+import re
+import base64
 
 import requests
 import markdownify
@@ -127,7 +129,20 @@ def display_message_content(msg: Dict[str, Any]):
             message_content += "\n\n**Tool Calls:**\n"
             for tool_call in msg["tool_calls"]:
                 message_content += f"- **{tool_call['function']['name']}**: {tool_call['function']['arguments']}\n"
+        
         st.markdown(message_content)
+
+        # Extract SVG content using regular expressions
+        svg_pattern = re.compile(r'<svg[^>]*>.*?</svg>', re.DOTALL)
+        svg_matches = svg_pattern.findall(message_content)
+        
+        # Display each SVG image
+        for i, svg in enumerate(svg_matches):
+            # Convert SVG to base64 for display in st.image
+            svg_bytes = svg.encode('utf-8')
+            b64 = base64.b64encode(svg_bytes).decode('utf-8')
+            svg_data_uri = f"data:image/svg+xml;base64,{b64}"
+            st.image(svg_data_uri, use_container_width=True)
 
 def display_message_actions(msg: Dict[str, Any], idx: int, session: Dict[str, Any], db, is_last_message: bool):
     """Display action buttons for a message."""
