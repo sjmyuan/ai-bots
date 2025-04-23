@@ -384,9 +384,15 @@ def handle_user_input(session: Dict[str, Any], client, model: str, system_prompt
                 messages_to_send = prepare_messages_for_api(session)
 
                 # Create the chat completion stream
+                # Prepend system_prompt content to the first user message if the role is "user"
+                if system_prompt_list and system_prompt_list[0]["role"] == "user" and messages_to_send:
+                    messages_to_send[0]["content"] = system_prompt_list[0]["content"] + "\n\n" + messages_to_send[0]["content"]
+                else:
+                    messages_to_send = system_prompt_list + messages_to_send
+
                 stream = client.chat.completions.create(
                     model=model,
-                    messages=system_prompt_list + messages_to_send,
+                    messages= messages_to_send,
                     tools=TOOLS if model != "deepseek-reasoner" and model != "deepseek-r1" else None,
                     function_call="auto",
                     stream=True,
@@ -464,7 +470,10 @@ def botpage(db):
     st.caption(f"模型: {model['name']}")
 
     # Define the system prompt
-    system_prompt = {"role": "system", "content": bot["prompt"]}
+    system_prompt = {
+        "role": "user" if not model.get("support_system_prompt", True) else "system",
+        "content": bot["prompt"]
+    }
     system_prompt_list = [system_prompt] if system_prompt["content"].strip() != "" else []
 
     # Initialize the OpenAI client
