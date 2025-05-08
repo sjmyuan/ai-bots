@@ -228,7 +228,7 @@ if st.session_state["authentication_status"]:
                 st.markdown(f"### {date}")
                 for session in sorted(grouped_sessions[date], key=lambda s: s["create_time"], reverse=True):
                     st.button(
-                        session["name"],
+                        str(session["name"]),
                         key=session["id"],
                         on_click=set_current_session,
                         args=(session,),

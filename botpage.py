@@ -441,7 +441,7 @@ def handle_user_input(session: Dict[str, Any], client, model: str, system_prompt
 
         # Set the session name if it is not already set
         if not session["name"]:
-            session["name"] = prompt[:50]
+            session["name"] = str(prompt[:50])
             st.session_state.bot_sessions.append(session)
 
         save_session_to_db(db, session)
