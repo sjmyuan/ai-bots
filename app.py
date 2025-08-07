@@ -202,6 +202,7 @@ if st.session_state["authentication_status"]:
             for bot in st.session_state.bots:
                 st.button(
                     bot["name"],
+                    key=bot["id"],
                     on_click=set_current_session,
                     args=(create_new_session(st.session_state["name"], bot["id"]),),
                     use_container_width=True,
