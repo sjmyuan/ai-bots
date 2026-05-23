@@ -12,8 +12,8 @@ services:
     container_name: mongo
     restart: always
     environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: example
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USERNAME:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?MONGO_PASSWORD must be set in .env}
     volumes:
       - mongo-data:/data/db
     networks:
@@ -32,11 +32,11 @@ services:
     ports:
       - "8501:8501"
     environment:
-      - MONGO_URI=mongodb://root:example@mongo:27017/
+      - MONGO_URI=mongodb://${MONGO_USERNAME:-root}:${MONGO_PASSWORD:?MONGO_PASSWORD must be set in .env}@mongo:27017/
       - CONFIG_FILE=/app/config.yml
     volumes:
-      - .:/app
-    command: streamlit run app.py
+      - ./config.yml:/app/config.yml
+    command: streamlit run app.py --server.port=8501 --server.address=0.0.0.0
     depends_on:
       - mongo
     networks:
