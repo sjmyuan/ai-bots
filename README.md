@@ -15,6 +15,7 @@ models:
     api_key: "" # api key
     base_url: "" # the base url of OpenAI-compatible platform, for example https://dashscope.aliyuncs.com/compatible-mode/v1
     model: "" # model
+    support_file_upload: false # optional, default false; set true for vision/multimodal models that accept image uploads
 
 bots:
   - id: 1 # bot id

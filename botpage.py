@@ -2,6 +2,7 @@
 from bs4 import BeautifulSoup
 from openai import OpenAI
 from datetime import datetime
+import os
 import re
 import base64
 
@@ -13,8 +14,30 @@ import logging
 import json
 from typing import Optional, List, Dict, Any, Tuple
 
+# Maximum number of tool-call rounds per user turn to prevent runaway loops.
+MAX_TOOL_ROUNDS = 10
+
 # Define tools as a constant
 TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": "Search the web using Bing and return a list of relevant results with titles, URLs, and snippets. Use this to find up-to-date information, then call fetch_url on the result URLs to get full content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query",
+                    }
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -33,11 +56,13 @@ TOOLS = [
             },
             "strict": True,
         },
-    }
+    },
 ]
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+# Set up logging — set LOG_LEVEL=DEBUG in the environment to enable debug output.
+# Defaults to INFO to avoid leaking secrets (e.g. API keys) from third-party SDKs.
+_log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=getattr(logging, _log_level, logging.INFO))
 logger = logging.getLogger(__name__)
 
 # --- Utility Functions ---
@@ -62,19 +87,23 @@ def save_session_to_db(db, session):
             "$set": {
                 "user": session["user"],
                 "name": session["name"],
-                "create_time": datetime.now(),  # Update timestamp on message changes
+                "updated_at": datetime.now(),
                 "bot_id": session["bot_id"],
                 "messages": session["messages"],
-            }
+            },
+            "$setOnInsert": {
+                "create_time": datetime.now(),
+            },
         },
         upsert=True,
     )
 
 
-def initialize_openai_client(api_key, base_url):
+@st.cache_resource
+def initialize_openai_client(api_key: str, base_url: str) -> OpenAI:
     """Initialize the OpenAI client."""
     try:
-        return OpenAI(api_key=api_key, base_url=base_url)
+        return OpenAI(api_key=api_key, base_url=base_url, max_retries=2)
     except Exception as e:
         logger.error(f"Failed to initialize OpenAI client: {e}")
         st.error(
@@ -111,6 +140,43 @@ def _is_safe_url(url: str) -> bool:
         return False
 
 
+def search_web(query: str) -> Optional[List[Dict]]:
+    """Search the web by scraping Bing search results."""
+    try:
+        response = requests.get(
+            "https://www.bing.com/search",
+            params={"q": query},
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            },
+            timeout=15,
+        )
+        logger.debug(f"Bing search HTTP {response.status_code} for query: {query!r}")
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, "html.parser")
+        items = soup.select("#b_results li.b_algo")
+        logger.debug(f"Bing search: found {len(items)} raw result elements")
+        results = []
+        for li in items[:5]:
+            a_tag = li.select_one("h2 a")
+            snippet_tag = li.select_one(".b_caption p")
+            if a_tag:
+                url = a_tag.get("href", "")
+                if url.startswith(("http://", "https://")):
+                    results.append(
+                        {
+                            "title": a_tag.get_text(),
+                            "url": url,
+                            "snippet": snippet_tag.get_text() if snippet_tag else "",
+                        }
+                    )
+        logger.debug(f"Bing search: parsed {len(results)} results for query: {query!r}")
+        return results if results else None
+    except Exception as e:
+        logger.error(f"Failed to search Bing for '{query}': {e}")
+        return None
+
+
 def fetch_url(url: str) -> Optional[str]:
     """Fetch and extract main content from a URL."""
     if not _is_safe_url(url):
@@ -132,6 +198,15 @@ def fetch_url(url: str) -> Optional[str]:
 def handle_function_call(function_name: str, arguments: dict) -> dict:
     """Handle function calls from the AI client."""
     try:
+        if function_name == "search_web":
+            query = arguments.get("query")
+            if not query:
+                return {"error": "Query parameter missing"}
+            results = search_web(query)
+            if results is not None:
+                return {"content": json.dumps(results, ensure_ascii=False)}
+            else:
+                return {"error": f"Failed to search for: {query}"}
         if function_name == "fetch_url":
             url = arguments.get("url")
             if not url:
@@ -145,6 +220,20 @@ def handle_function_call(function_name: str, arguments: dict) -> dict:
     except Exception as e:
         logger.error(f"Error in function call {function_name}: {e}")
         return {"error": f"Function call failed: {e}"}
+
+
+# --- Utility helpers ---
+
+
+def _get_text_content(content) -> str:
+    """Extract plain text from message content (string or list of parts)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            part.get("text", "") for part in content if part.get("type") == "text"
+        )
+    return ""
 
 
 # --- Message Display and Handling Functions ---
@@ -170,7 +259,8 @@ def display_message_content(msg: Dict[str, Any]):
             st.text(msg["content"])
     else:
         reasoning = quote_content(msg.get("reasoning_content", ""))
-        message_content = (reasoning + "\n\n" if reasoning else "") + msg["content"]
+        text_content = _get_text_content(msg["content"])
+        message_content = (reasoning + "\n\n" if reasoning else "") + text_content
 
         if "tool_calls" in msg and msg["tool_calls"]:
             message_content += "\n\n**Tool Calls:**\n"
@@ -178,6 +268,12 @@ def display_message_content(msg: Dict[str, Any]):
                 message_content += f"- **{tool_call['function']['name']}**: {tool_call['function']['arguments']}\n"
 
         st.markdown(message_content)
+
+        # Display uploaded images from list content
+        if isinstance(msg["content"], list):
+            for part in msg["content"]:
+                if part.get("type") == "image_url":
+                    st.image(part["image_url"]["url"])
 
         # Extract SVG content using regular expressions
         svg_pattern = re.compile(r"<svg[^>]*>.*?</svg>", re.DOTALL)
@@ -200,15 +296,16 @@ def display_message_actions(
     current_col = 4
 
     # Copy button
+    text_content = _get_text_content(msg["content"])
     with cols[current_col]:
         current_col -= 1
-        st_copy_to_clipboard(msg["content"], key=f"copy_{hash(msg['content'])}_{idx}")
+        st_copy_to_clipboard(text_content, key=f"copy_{idx}")
 
     # Edit button for user messages
     if msg["role"] == "user":
         with cols[current_col]:
             current_col -= 1
-            if st.button("📝", key=f"edit_{hash(msg['content'])}_{idx}"):
+            if st.button("📝", key=f"edit_{idx}"):
                 st.session_state.edit_message_idx = idx
                 st.rerun()
 
@@ -236,12 +333,30 @@ def display_message_actions(
 
 def display_edit_form(msg: Dict[str, Any], idx: int, session: Dict[str, Any], db):
     """Display the form for editing a message."""
-    new_content = st.text_area(
-        "Edit Message", value=msg["content"], key=f"edit_text_{idx}", height=300
+    original_content = msg["content"]
+    new_text = st.text_area(
+        "Edit Message",
+        value=_get_text_content(original_content),
+        key=f"edit_text_{idx}",
+        height=300,
     )
     col1, col2 = st.columns([1, 1])
     with col1:
         if st.button("Submit", key=f"submit_edit_{idx}"):
+            if isinstance(original_content, list):
+                # Preserve image parts; replace text part
+                new_content: Any = []
+                text_replaced = False
+                for part in original_content:
+                    if part.get("type") == "text" and not text_replaced:
+                        new_content.append({"type": "text", "text": new_text})
+                        text_replaced = True
+                    else:
+                        new_content.append(part)
+                if not text_replaced:
+                    new_content.insert(0, {"type": "text", "text": new_text})
+            else:
+                new_content = new_text
             session["messages"][idx]["content"] = new_content
             st.session_state.edit_message_idx = None
             # Clear all messages after the edited message
@@ -405,11 +520,51 @@ def prepare_messages_for_api(session: Dict[str, Any]) -> List[Dict[str, Any]]:
             (i for i, msg in enumerate(messages_to_send) if msg["role"] == "user"), None
         )
         if first_user_idx is not None:
-            messages_to_send[first_user_idx][
-                "content"
-            ] = f"<user_input>{messages_to_send[first_user_idx]['content']}</user_input>"
+            content = messages_to_send[first_user_idx]["content"]
+            if isinstance(content, list):
+                wrapped = False
+                for part in content:
+                    if part.get("type") == "text":
+                        part["text"] = f"<user_input>{part['text']}</user_input>"
+                        wrapped = True
+                        break
+                if not wrapped:
+                    content.insert(
+                        0, {"type": "text", "text": "<user_input></user_input>"}
+                    )
+            else:
+                messages_to_send[first_user_idx][
+                    "content"
+                ] = f"<user_input>{content}</user_input>"
 
     return messages_to_send
+
+
+def _inject_system_prompt(
+    messages: List[Dict[str, Any]],
+    system_prompt_list: List[Dict[str, str]],
+) -> List[Dict[str, Any]]:
+    """Prepend the system prompt to a prepared message list.
+
+    When the model does not support a system role, the prompt content is
+    prepended to the first user message so the instruction still reaches
+    the model.  When system prompts are supported, the system message is
+    prepended as a separate entry.
+    """
+    if not system_prompt_list:
+        return messages
+
+    if system_prompt_list[0]["role"] == "user" and messages:
+        prefix = system_prompt_list[0]["content"] + "\n\n"
+        first_content = messages[0]["content"]
+        messages = [dict(messages[0])] + messages[1:]  # shallow-copy first entry
+        if isinstance(first_content, list):
+            messages[0]["content"] = [{"type": "text", "text": prefix}] + first_content
+        else:
+            messages[0]["content"] = prefix + first_content
+        return messages
+
+    return system_prompt_list + messages
 
 
 # --- Main Chat Handling Functions ---
@@ -430,59 +585,81 @@ def handle_user_input(
         st.session_state.retry_last_message = False
         retry_mode = True
 
+    support_file_upload = st.session_state.current_model.get(
+        "support_file_upload", False
+    )
+    uploaded_files = None
+    if support_file_upload:
+        uploaded_files = st.file_uploader(
+            "上传图片",
+            accept_multiple_files=True,
+            type=["png", "jpg", "jpeg", "gif", "webp"],
+            label_visibility="collapsed",
+        )
+
     if prompt := st.chat_input() or retry_mode:
         # In retry mode, we don't need a new user prompt
         if not retry_mode:
+            # Build message content (plain string or multipart list with images)
+            if uploaded_files:
+                content: Any = [{"type": "text", "text": prompt}]
+                for f in uploaded_files:
+                    encoded = base64.b64encode(f.read()).decode("utf-8")
+                    content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{f.type};base64,{encoded}"},
+                        }
+                    )
+            else:
+                content = prompt
+
             # Append the user message to the session
             session["messages"].append(
-                {"role": "user", "content": prompt, "reasoning_content": ""}
+                {"role": "user", "content": content, "reasoning_content": ""}
             )
 
             # Display the user message
             with st.chat_message("user"):
-                st.markdown(prompt)
+                display_message_content(session["messages"][-1])
+            text_for_copy = _get_text_content(content)
             cols = st.columns([8, 1, 1])
             with cols[2]:
-                st_copy_to_clipboard(prompt, key=f"copy_{hash(prompt)}_input_latest")
+                st_copy_to_clipboard(text_for_copy, key="copy_input_latest")
 
         try:
             # Set flag to indicate response is being generated
             st.session_state.generating_response = True
 
-            # Start a do-while loop to handle tool calls
+            # Build messages with system prompt injection once, before the loop
+            messages_to_send = _inject_system_prompt(
+                prepare_messages_for_api(session), system_prompt_list
+            )
+
+            supports_tools = st.session_state.current_model.get("support_tools", True)
+
+            # Start a do-while loop to handle tool calls (capped at MAX_TOOL_ROUNDS)
+            tool_rounds = 0
             while True:
-                # Get messages after the last truncation efficiently
-                messages_to_send = prepare_messages_for_api(session)
-
-                # Create the chat completion stream
-                # Prepend system_prompt content to the first user message if the role is "user"
-                if (
-                    system_prompt_list
-                    and system_prompt_list[0]["role"] == "user"
-                    and messages_to_send
-                ):
-                    messages_to_send[0]["content"] = (
-                        system_prompt_list[0]["content"]
-                        + "\n\n"
-                        + messages_to_send[0]["content"]
-                    )
-                else:
-                    messages_to_send = system_prompt_list + messages_to_send
-
-                supports_tools = st.session_state.current_model.get(
-                    "support_tools", True
-                )
                 stream = client.chat.completions.create(
                     model=model,
                     messages=messages_to_send,
                     tools=TOOLS if supports_tools else None,
-                    tool_choice="auto" if supports_tools else None,
                     stream=True,
+                    timeout=300,
                 )
 
                 with st.chat_message("assistant"):
                     # Write the stream to the chat
                     response, reasoning_response, tool_calls = write_stream(stream)
+
+                assistant_msg: Dict[str, Any] = {
+                    "role": "assistant",
+                    "content": response,
+                }
+                if tool_calls:
+                    assistant_msg["tool_calls"] = tool_calls
+                messages_to_send.append(assistant_msg)
 
                 session["messages"].append(
                     {
@@ -496,14 +673,28 @@ def handle_user_input(
                 if not tool_calls:
                     break  # Exit the loop if there are no tool calls
 
+                tool_rounds += 1
+                if tool_rounds >= MAX_TOOL_ROUNDS:
+                    logger.warning(
+                        "Tool call limit of %d reached; stopping.", MAX_TOOL_ROUNDS
+                    )
+                    st.warning(
+                        f"Tool call limit ({MAX_TOOL_ROUNDS}) reached. The response may be incomplete."
+                    )
+                    break
+
                 # Handle tool calls
                 for tool_call in tool_calls:
                     if "function" in tool_call and tool_call["function"]:
-                        arguments = (
-                            json.loads(tool_call["function"]["arguments"])
-                            if tool_call["function"]["arguments"]
-                            else {}
-                        )
+                        try:
+                            arguments = (
+                                json.loads(tool_call["function"]["arguments"])
+                                if tool_call["function"]["arguments"]
+                                else {}
+                            )
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Malformed tool arguments: {e}")
+                            arguments = {}
                         function_response = handle_function_call(
                             tool_call["function"]["name"], arguments
                         )
@@ -517,6 +708,13 @@ def handle_user_input(
                                 "tool_call_id": tool_call["id"],
                                 "content": tool_response_content,
                                 "reasoning_content": "",
+                            }
+                        )
+                        messages_to_send.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call["id"],
+                                "content": tool_response_content,
                             }
                         )
                         with st.chat_message("tool"):
