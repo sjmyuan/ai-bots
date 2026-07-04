@@ -1,7 +1,14 @@
+import logging
 import socket
 import pytest
 import botpage
-from botpage import prepare_messages_for_api, handle_function_call, _is_safe_url
+from botpage import (
+    _get_text_content,
+    _is_safe_url,
+    handle_function_call,
+    prepare_messages_for_api,
+    process_tool_calls,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -147,6 +154,46 @@ class TestPrepareMessagesForApi:
         result = prepare_messages_for_api(_session(msgs))
         assert len(result) == 1
         assert result[0]["content"] == "<user_input>current</user_input>"
+
+
+# ---------------------------------------------------------------------------
+# _get_text_content
+# ---------------------------------------------------------------------------
+
+
+class TestGetTextContent:
+    def test_string_returns_as_is(self):
+        assert _get_text_content("hello") == "hello"
+
+    def test_list_with_text_parts_joins(self):
+        content = [
+            {"type": "text", "text": "hello"},
+            {"type": "text", "text": "world"},
+        ]
+        assert _get_text_content(content) == "hello\nworld"
+
+    def test_list_mixed_types_extracts_text_only(self):
+        content = [
+            {"type": "text", "text": "hello"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+        ]
+        assert _get_text_content(content) == "hello"
+
+    def test_empty_list_returns_empty(self):
+        assert _get_text_content([]) == ""
+
+    def test_list_without_text_parts_returns_empty(self):
+        content = [
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}}
+        ]
+        assert _get_text_content(content) == ""
+
+    def test_unexpected_type_returns_empty_and_logs_warning(self, caplog):
+        caplog.set_level(logging.WARNING)
+        result = _get_text_content(42)
+        assert result == ""
+        assert "Unexpected content type" in caplog.text
+        assert "int" in caplog.text
 
 
 # ---------------------------------------------------------------------------

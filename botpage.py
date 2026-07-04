@@ -2,20 +2,26 @@
 from bs4 import BeautifulSoup
 from openai import OpenAI
 from datetime import datetime
+import base64
+import ipaddress
+import json
+import logging
 import os
 import re
-import base64
+import socket
+import urllib.parse
 
 import requests
 import markdownify
 from st_copy_to_clipboard import st_copy_to_clipboard
 import streamlit as st
-import logging
-import json
 from typing import Optional, List, Dict, Any, Tuple
 
 # Maximum number of tool-call rounds per user turn to prevent runaway loops.
-MAX_TOOL_ROUNDS = 10
+MAX_TOOL_ROUNDS = 1000
+
+# Maximum tool response content size (bytes) stored in session / sent to the API.
+MAX_TOOL_RESPONSE_BYTES = 50_000
 
 # Define tools as a constant
 TOOLS = [
@@ -106,18 +112,12 @@ def initialize_openai_client(api_key: str, base_url: str) -> OpenAI:
         return OpenAI(api_key=api_key, base_url=base_url, max_retries=2)
     except Exception as e:
         logger.error(f"Failed to initialize OpenAI client: {e}")
-        st.error(
-            "Failed to initialize OpenAI client. Please check the API key and base URL."
-        )
+        st.error("OpenAI 客户端初始化失败，请检查 API 密钥和接口地址。")
         st.stop()
 
 
 def _is_safe_url(url: str) -> bool:
     """Return True only if the URL uses http/https and does not target a private/internal host."""
-    import ipaddress
-    import socket
-    import urllib.parse
-
     try:
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme not in ("http", "https"):
@@ -183,7 +183,11 @@ def fetch_url(url: str) -> Optional[str]:
         logger.warning(f"Blocked fetch to unsafe URL: {url}")
         return None
     try:
-        response = requests.get(url, timeout=15)
+        response = requests.get(url, timeout=15, allow_redirects=False)
+        if response.is_redirect:
+            location = response.headers.get("Location", "")
+            logger.warning(f"Blocked redirect from {url} to {location!r}")
+            return None
         response.raise_for_status()
         soup = BeautifulSoup(
             response.content, "html.parser", from_encoding=response.encoding
@@ -233,6 +237,7 @@ def _get_text_content(content) -> str:
         return "\n".join(
             part.get("text", "") for part in content if part.get("type") == "text"
         )
+    logger.warning("Unexpected content type: %s", type(content).__name__)
     return ""
 
 
@@ -255,7 +260,7 @@ def display_truncation_message():
 def display_message_content(msg: Dict[str, Any]):
     """Display the content of a message."""
     if msg["role"] == "tool":
-        with st.expander("Click to Expand/Collapse Tool Call Response", expanded=False):
+        with st.expander("点击展开/收起工具调用响应", expanded=False):
             st.text(msg["content"])
     else:
         reasoning = quote_content(msg.get("reasoning_content", ""))
@@ -291,39 +296,55 @@ def display_message_content(msg: Dict[str, Any]):
 def display_message_actions(
     msg: Dict[str, Any], idx: int, session: Dict[str, Any], db, is_last_message: bool
 ):
-    """Display action buttons for a message."""
-    cols = st.columns([6, 1, 1, 1, 1])
-    current_col = 4
+    """Display action buttons for a message.
 
-    # Copy button
+    Columns are sized dynamically based on which buttons are shown,
+    so there are never empty placeholder columns.
+    """
     text_content = _get_text_content(msg["content"])
-    with cols[current_col]:
-        current_col -= 1
-        st_copy_to_clipboard(text_content, key=f"copy_{idx}")
 
-    # Edit button for user messages
-    if msg["role"] == "user":
-        with cols[current_col]:
-            current_col -= 1
-            if st.button("📝", key=f"edit_{idx}"):
-                st.session_state.edit_message_idx = idx
-                st.rerun()
+    # Build the list of buttons from the right end (rightmost = last in list)
+    buttons = []
 
-    # Additional buttons for the last message
+    # Copy button — always at the far right end
+    buttons.append("copy")
+
+    # Truncate/remove button — to the left of copy, only for the last message
     if is_last_message and not st.session_state.get("generating_response", False):
-        # Truncate button
-        with cols[current_col]:
-            current_col -= 1
-            if st.button("✂️", key="truncate_button"):
-                session["messages"].append(
-                    {"role": "truncation", "content": "", "reasoning_content": ""}
-                )
-                save_session_to_db(db, session)
-                st.rerun()
+        buttons.append("truncate")
 
-        # Retry button for assistant messages
-        if msg["role"] == "assistant":
-            with cols[current_col]:
+    # Edit button — to the left of truncate, only for user messages
+    if msg["role"] == "user":
+        buttons.append("edit")
+
+    # Retry button — to the left of edit, only for the last assistant message
+    if (
+        is_last_message
+        and not st.session_state.get("generating_response", False)
+        and msg["role"] == "assistant"
+    ):
+        buttons.append("retry")
+
+    # Create dynamic columns: spacer + one per button
+    col_ratios = [6] + [1] * len(buttons)
+    cols = st.columns(col_ratios)
+
+    for i, action in enumerate(buttons):
+        with cols[i + 1]:
+            if action == "copy":
+                st_copy_to_clipboard(text_content, key=f"copy_{idx}")
+            elif action == "edit":
+                if st.button("📝", key=f"edit_{idx}"):
+                    st.session_state.edit_message_idx = idx
+                    st.rerun()
+            elif action == "truncate":
+                if st.button("✂️", key="truncate_button"):
+                    session["messages"].append(
+                        {"role": "truncation", "content": "", "reasoning_content": ""}
+                    )
+                    save_session_to_db(db, session)
+                    st.rerun()
+            elif action == "retry":
                 if st.button("🔄", key="retry_button"):
                     st.session_state.retry_last_message = True
                     session["messages"].pop()
@@ -335,14 +356,14 @@ def display_edit_form(msg: Dict[str, Any], idx: int, session: Dict[str, Any], db
     """Display the form for editing a message."""
     original_content = msg["content"]
     new_text = st.text_area(
-        "Edit Message",
+        "编辑消息",
         value=_get_text_content(original_content),
         key=f"edit_text_{idx}",
         height=300,
     )
     col1, col2 = st.columns([1, 1])
     with col1:
-        if st.button("Submit", key=f"submit_edit_{idx}"):
+        if st.button("提交", key=f"submit_edit_{idx}"):
             if isinstance(original_content, list):
                 # Preserve image parts; replace text part
                 new_content: Any = []
@@ -374,7 +395,7 @@ def display_edit_form(msg: Dict[str, Any], idx: int, session: Dict[str, Any], db
             # Rerun the app to refresh the UI
             st.rerun()
     with col2:
-        if st.button("Cancel", key=f"cancel_edit_{idx}"):
+        if st.button("取消", key=f"cancel_edit_{idx}"):
             st.session_state.edit_message_idx = None
             st.rerun()
 
@@ -522,6 +543,9 @@ def prepare_messages_for_api(session: Dict[str, Any]) -> List[Dict[str, Any]]:
         if first_user_idx is not None:
             content = messages_to_send[first_user_idx]["content"]
             if isinstance(content, list):
+                # Copy the list (and each part dict) to avoid mutating session state
+                content = [dict(part) for part in content]
+                messages_to_send[first_user_idx]["content"] = content
                 wrapped = False
                 for part in content:
                     if part.get("type") == "text":
@@ -622,10 +646,6 @@ def handle_user_input(
             # Display the user message
             with st.chat_message("user"):
                 display_message_content(session["messages"][-1])
-            text_for_copy = _get_text_content(content)
-            cols = st.columns([8, 1, 1])
-            with cols[2]:
-                st_copy_to_clipboard(text_for_copy, key="copy_input_latest")
 
         try:
             # Set flag to indicate response is being generated
@@ -638,91 +658,8 @@ def handle_user_input(
 
             supports_tools = st.session_state.current_model.get("support_tools", True)
 
-            # Start a do-while loop to handle tool calls (capped at MAX_TOOL_ROUNDS)
-            tool_rounds = 0
-            while True:
-                stream = client.chat.completions.create(
-                    model=model,
-                    messages=messages_to_send,
-                    tools=TOOLS if supports_tools else None,
-                    stream=True,
-                    timeout=300,
-                )
-
-                with st.chat_message("assistant"):
-                    # Write the stream to the chat
-                    response, reasoning_response, tool_calls = write_stream(stream)
-
-                assistant_msg: Dict[str, Any] = {
-                    "role": "assistant",
-                    "content": response,
-                }
-                if tool_calls:
-                    assistant_msg["tool_calls"] = tool_calls
-                messages_to_send.append(assistant_msg)
-
-                session["messages"].append(
-                    {
-                        "role": "assistant",
-                        "content": response,
-                        "reasoning_content": reasoning_response,
-                        **({"tool_calls": tool_calls} if tool_calls else {}),
-                    }
-                )
-
-                if not tool_calls:
-                    break  # Exit the loop if there are no tool calls
-
-                tool_rounds += 1
-                if tool_rounds >= MAX_TOOL_ROUNDS:
-                    logger.warning(
-                        "Tool call limit of %d reached; stopping.", MAX_TOOL_ROUNDS
-                    )
-                    st.warning(
-                        f"Tool call limit ({MAX_TOOL_ROUNDS}) reached. The response may be incomplete."
-                    )
-                    break
-
-                # Handle tool calls
-                for tool_call in tool_calls:
-                    if "function" in tool_call and tool_call["function"]:
-                        try:
-                            arguments = (
-                                json.loads(tool_call["function"]["arguments"])
-                                if tool_call["function"]["arguments"]
-                                else {}
-                            )
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Malformed tool arguments: {e}")
-                            arguments = {}
-                        function_response = handle_function_call(
-                            tool_call["function"]["name"], arguments
-                        )
-                        tool_response_content = function_response.get(
-                            "content",
-                            function_response.get("error", "Invalid function response"),
-                        )
-                        session["messages"].append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call["id"],
-                                "content": tool_response_content,
-                                "reasoning_content": "",
-                            }
-                        )
-                        messages_to_send.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call["id"],
-                                "content": tool_response_content,
-                            }
-                        )
-                        with st.chat_message("tool"):
-                            with st.expander(
-                                "Click to Expand/Collapse Tool Call Response",
-                                expanded=False,
-                            ):
-                                st.text(tool_response_content)
+            # Delegate tool-call loop to the extracted function
+            process_tool_calls(messages_to_send, client, model, supports_tools, session)
 
             # Reset the generating response flag
             st.session_state.generating_response = False
@@ -730,10 +667,8 @@ def handle_user_input(
         except Exception as e:
             # Reset the generating response flag in case of error
             st.session_state.generating_response = False
-            logger.error(f"Failed to create chat completion: {e}", exc_info=True)
-            st.error(
-                "Failed to create chat completion. Please check the model and messages."
-            )
+            logger.error(f"创建聊天回复失败: {e}", exc_info=True)
+            st.error("创建聊天回复失败，请检查模型和消息内容。")
             st.stop()
 
         # Set the session name if it is not already set
@@ -743,6 +678,104 @@ def handle_user_input(
 
         save_session_to_db(db, session)
         st.rerun()  # Refresh the UI
+
+
+def process_tool_calls(
+    messages_to_send: List[Dict[str, Any]],
+    client: OpenAI,
+    model: str,
+    supports_tools: bool,
+    session: Dict[str, Any],
+) -> None:
+    """Run the tool-call loop: stream response, handle tool calls, repeat up to MAX_TOOL_ROUNDS times."""
+    tool_rounds = 0
+    while True:
+        stream = client.chat.completions.create(
+            model=model,
+            messages=messages_to_send,
+            tools=TOOLS if supports_tools else None,
+            stream=True,
+            timeout=300,
+        )
+
+        with st.chat_message("assistant"):
+            response, reasoning_response, tool_calls = write_stream(stream)
+
+        assistant_msg: Dict[str, Any] = {
+            "role": "assistant",
+            "content": response,
+        }
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+        messages_to_send.append(assistant_msg)
+
+        session["messages"].append(
+            {
+                "role": "assistant",
+                "content": response,
+                "reasoning_content": reasoning_response,
+                **({"tool_calls": tool_calls} if tool_calls else {}),
+            }
+        )
+
+        if not tool_calls:
+            break
+
+        tool_rounds += 1
+        if tool_rounds >= MAX_TOOL_ROUNDS:
+            logger.warning("工具调用次数已达上限 %d，停止。", MAX_TOOL_ROUNDS)
+            st.warning(f"工具调用次数已达上限 ({MAX_TOOL_ROUNDS})，响应可能不完整。")
+            break
+
+        for tool_call in tool_calls:
+            if "function" in tool_call and tool_call["function"]:
+                try:
+                    arguments = (
+                        json.loads(tool_call["function"]["arguments"])
+                        if tool_call["function"]["arguments"]
+                        else {}
+                    )
+                except json.JSONDecodeError as e:
+                    logger.error(f"工具参数格式错误: {e}")
+                    arguments = {}
+                function_response = handle_function_call(
+                    tool_call["function"]["name"], arguments
+                )
+                tool_response_content = function_response.get(
+                    "content",
+                    function_response.get("error", "无效的函数响应"),
+                )
+                if len(tool_response_content) > MAX_TOOL_RESPONSE_BYTES:
+                    logger.warning(
+                        "工具 %s 的响应已从 %d 字节截断至 %d 字节。",
+                        tool_call["function"]["name"],
+                        len(tool_response_content),
+                        MAX_TOOL_RESPONSE_BYTES,
+                    )
+                    tool_response_content = tool_response_content[
+                        :MAX_TOOL_RESPONSE_BYTES
+                    ]
+                session["messages"].append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": tool_response_content,
+                        "reasoning_content": "",
+                    }
+                )
+                messages_to_send.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": tool_response_content,
+                    }
+                )
+                with st.chat_message("tool"):
+                    with st.expander(
+                        "点击展开/收起工具调用响应",
+                        expanded=False,
+                    ):
+                        st.text(tool_response_content)
 
 
 def botpage(db):
@@ -756,7 +789,7 @@ def botpage(db):
         bot = next(b for b in st.session_state.bots if b["id"] == session["bot_id"])
     except StopIteration:
         logger.error("No bot found with the specified ID.")
-        st.info("There is no bot available.")
+        st.info("没有可用的机器人。")
         st.stop()
 
     # Set the name of the session
@@ -766,6 +799,34 @@ def botpage(db):
     st.title(name)
     st.caption(f"Bot: {bot['name']}")
     st.caption(f"模型: {model['name']}")
+
+    # Inject CSS for mobile-friendly action buttons
+    st.markdown(
+        """
+        <style>
+        @media (max-width: 768px) {
+            div[data-testid="column"] > div.stButton > button {
+                min-height: 1.6rem;
+                height: 1.8rem;
+                padding: 0 0.35rem;
+                font-size: 0.75rem;
+                line-height: 1;
+            }
+            div[data-testid="column"] .st-copy-to-clipboard-btn {
+                min-height: 1.6rem;
+                height: 1.8rem;
+                padding: 0 0.35rem;
+                font-size: 0.75rem;
+                line-height: 1;
+            }
+            div[data-testid="column"] {
+                padding: 0 1px;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
     # Define the system prompt
     system_prompt = {

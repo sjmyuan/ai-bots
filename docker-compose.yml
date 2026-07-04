@@ -4,8 +4,6 @@
 # - ai-bots: Backend application service
 # - streamlit: Frontend web interface
 
-version: '3.8'
-
 services:
   mongo:
     image: mongo:latest
